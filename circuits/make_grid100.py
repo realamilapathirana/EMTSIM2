@@ -65,11 +65,12 @@ def num(x):
 class Drawing:
     """Components and wires in the circuit editor's format."""
 
-    def __init__(self, phases=1):
+    def __init__(self, phases=1, settings=None):
         self.comps, self.wires = [], []
         self.phases = phases          # 3: a three-phase drawing (components R3, L3, C3, V3, SW3, F3)
+        self.settings = settings or {}  # run settings: {"dt": "50u", "tstop": "200m"}
 
-    def add(self, ctype, name, x, y, rot=0, **params):
+    def add(self, ctype, name, x, y, rot=0, /, **params):   # positional-only, so params may be called x, y
         self.comps.append({"type": ctype, "name": name, "x": x, "y": y, "rot": rot,
                            "params": {k: (num(v) if isinstance(v, float) else str(v)) for k, v in params.items()}})
 
@@ -203,17 +204,17 @@ def build_area(d, ox=0, oy=0, prefix="", events=True, angle_offset=0.0):
     shunt("right", "R", "R_CB", x, Y + 8, 6, value=1.0e4)
 
 
-def netlist_from_drawing(d, title):
+def netlist_from_drawing(d, title, allow_warnings=False):
     """Netlist text for a drawing, produced by the editor's own code (gui/layout_to_net.js)."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-        json.dump({"v": 1, "phases": d.phases, "components": d.comps, "wires": d.wires}, f)
+        json.dump({"v": 1, "phases": d.phases, "settings": d.settings, "components": d.comps, "wires": d.wires}, f)
         tmp = f.name
     try:
         p = subprocess.run(["node", os.path.join(ROOT, "gui", "layout_to_net.js"), tmp, title],
                            capture_output=True, text=True)
     finally:
         os.remove(tmp)
-    if p.returncode != 0 or p.stderr.strip():
+    if p.returncode != 0 or (p.stderr.strip() and not allow_warnings):
         raise SystemExit("The drawing has problems:\n" + p.stderr)
     text = p.stdout
     kinds = [l.split()[0] for l in text.splitlines() if l and not l.startswith("#")]
