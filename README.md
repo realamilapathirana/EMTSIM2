@@ -14,6 +14,33 @@ It started as a learning project to understand what happens inside an EMT engine
 </p>
 <p align="center"><sub>Example network in <code>src/circuit.cpp</code>: 8 nodes fed by two 230 V, 50 Hz sources (one Norton, one ideal, 15° apart). A bolted fault at bus 6 is applied at 20 ms and cleared at 40 ms. Breaker SW1 then opens at 55 ms, splitting the network in two, and recloses at 80 ms. Bus 6 collapses during the fault and spikes when it clears, and the capacitive buses ring after each event.</sub></p>
 
+## How to run
+
+**One-time setup** (Windows, in a terminal in the project folder):
+
+```powershell
+git clone https://github.com/realamilapathirana/EMTSIM2.git
+cd EMTSIM2
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt   # numpy, scipy, matplotlib
+.\build.bat                                               # builds the C++ simulator and runs its tests
+```
+
+You need Python 3 and Visual Studio 2019 or later with "Desktop development with C++" (or GCC/Clang and CMake on other systems; see [Quick start](#quick-start)).
+
+**Then pick one:**
+
+| What | Command |
+|---|---|
+| Draw and run circuits in the browser editor | `.\gui.bat`, then **Open…** a circuit and press **▶ Run** |
+| Run a circuit file with C++ and plot it | `.\run.bat circuits\fault_clearing.net` |
+| Run a circuit file with Python and plot it | `.venv\Scripts\python main.py circuits\fault_clearing.net` |
+| Compare C++ and Python on a circuit | `.venv\Scripts\python compare.py --netlist circuits\fault_clearing.net --plot` |
+
+The circuits to try are in [`circuits/`](circuits): `example8.net`, `example3ph.net`, `fault_clearing.net`, `line_energisation.net`, `transformer_inrush.net`, `rectifier.net`, `machines.net`, `grid100.net` and `grid1000.net`. In PowerShell, keep the `.\` in front of the `.bat` files.
+
+The C++ simulator writes `results.csv` (node voltages), `currents.csv` (branch currents and machine quantities) and `events.csv` to the project folder; open them in Excel, or plot the voltages with `.venv\Scripts\python plot.py`.
+
 ## Features
 
 - R, L and C elements using trapezoidal-rule companion models
@@ -37,8 +64,8 @@ It started as a learning project to understand what happens inside an EMT engine
 ## Quick start
 
 ```bash
-git clone https://github.com/realamilapathirana/EMTSIM.git
-cd EMTSIM
+git clone https://github.com/realamilapathirana/EMTSIM2.git
+cd EMTSIM2
 pip install -r requirements.txt     # numpy, scipy, matplotlib
 ```
 
