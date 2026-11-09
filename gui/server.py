@@ -61,9 +61,18 @@ def run_cpp(net_path, work):
             else:
                 switches.append(float(r["t_start"]))
     sim_ms = next((float(l.split(":")[1].split()[0]) for l in p.stdout.splitlines() if l.startswith("Simulation time:")), None)
+    cnames, I = [], []
+    cpath = os.path.join(work, "currents.csv")
+    if os.path.isfile(cpath):   # branch currents (and machine speed, angle, power, torque)
+        with open(cpath, newline="") as f:
+            crow = list(csv.reader(f))
+        cnames = crow[0][1:]
+        cdata = [[float(x) for x in r[1:]] for r in crow[1:] if r]
+        I = [[r[k] for r in cdata] for k in range(len(cnames))]
     return {"names": names, "t": [r[0] for r in data], "V": [[r[k + 1] for r in data] for k in range(len(names))],
+            "cnames": cnames, "I": I,
             "events": {"faults": faults, "switches": switches}, "sim_ms": sim_ms,
-            "log": "\n".join(l for l in p.stdout.splitlines() if l.startswith("t = "))}
+            "log": "\n".join(l for l in p.stdout.splitlines() if l.startswith("t = ") or l.startswith("Warning"))}
 
 
 def run_python(net_path):
@@ -94,8 +103,9 @@ def simulate(text, engine):
     # The comparison above uses full precision; for plotting, 7 significant digits are plenty
     # and roughly halve the size of the response for large networks.
     for r in (a, b):
-        if r and "V" in r:
-            r["V"] = [[float("%.7g" % x) for x in v] for v in r["V"]]
+        for key in ("V", "I"):
+            if r and key in r:
+                r[key] = [[float("%.7g" % x) for x in v] for v in r[key]]
     return out
 
 

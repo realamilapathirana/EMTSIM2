@@ -42,10 +42,15 @@ def main(path):
         return
     faults = [[o.t_apply, o.t_clear] for o in net.comp_list if isinstance(o, el.Fault)]
     switches = [t for o in net.comp_list if isinstance(o, el.Switch) and not isinstance(o, el.Fault) for t in o.t_switch]
-    events = [l for l in log.getvalue().splitlines() if l.startswith("t = ")]
+    events = [l for l in log.getvalue().splitlines() if l.startswith("t = ") or l.startswith("Warning")]
+    nI = len(net.current_names)
+    I = [[float(row[k]) for row in net.ctrace] for k in range(nI)]
+    if not all(math.isfinite(x) for v in I for x in v):
+        I = [[x if math.isfinite(x) else 0.0 for x in v] for v in I]
     print(json.dumps({
         "names": ["V%d" % (k + 1) for k in range(net.numNodes)],
         "t": list(net.time), "V": V,
+        "cnames": list(net.current_names), "I": I,
         "events": {"faults": faults, "switches": switches},
         "sim_ms": sim_ms, "log": "\n".join(events),
     }))

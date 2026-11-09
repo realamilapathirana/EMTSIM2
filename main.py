@@ -33,7 +33,8 @@ def run(netlist_path=None):
     EMTDC.unconverged = 0
 
     #Enter the main time loop
-    while Time<config.stpTime:
+    # half a step of tolerance: Time is accumulated as Time += Dt and can land just below stpTime
+    while Time<config.stpTime-0.5*config.Dt:
         #Divide node voltage vector into VU and VK
         EMTDC.Vdivide()
         #Advance one time step

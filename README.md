@@ -17,10 +17,16 @@ It started as a learning project to understand what happens inside an EMT engine
 ## Features
 
 - R, L and C elements using trapezoidal-rule companion models
-- Sinusoidal voltage sources, either ideal or Norton equivalents with internal resistance
-- Time-controlled switches (breakers) and faults. The conductance matrix is rebuilt and refactorised only when something switches.
+- Sinusoidal voltage sources: ideal, Norton, or behind a series R-L or a three-phase sequence impedance
+- Time-controlled switches (breakers) and faults; breakers can open at the next current zero. The conductance matrix is rebuilt and refactorised only when something switches.
+- Coupled three-phase R-L branches and nominal-pi lines (sequence data), and Bergeron travelling-wave lines (single- and three-phase)
+- Single- and three-phase transformers (vector groups YNyn0, YNd1, YNd11, Dyn1, Dyn11, Yy0, Dd0), with optional core saturation
+- Non-linear elements: saturable inductor and metal-oxide surge arrester, solved by re-solving each step until their states settle
+- Power electronics: diodes and thyristors with firing-angle control
+- Machines: synchronous generator (classical model with swing equation) and induction motor
+- Branch currents of every element are recorded, together with machine speed, rotor angle, power and torque
 - Nodes can be numbered freely; source nodes are reordered automatically
-- Writes every node voltage to CSV, and `plot.py` plots them with fault periods and switch operations marked
+- Writes every node voltage and branch current to CSV, and `plot.py` plots them with fault periods and switch operations marked
 - C++ version is self-contained, with no dependencies: a sparse conductance matrix factorised by a sparse LDLᵀ with minimum-degree ordering, so it scales to large networks
 - **Circuit editor** in the browser: draw a circuit, run it with C++ or Python (or both) and see every node voltage
 - **Three-phase mode** in the editor: three-phase wires, R, L, C, sources, switches (poles together or independent) and faults (a-g … abc-g)
@@ -59,7 +65,7 @@ ctest --test-dir build -C Release      # analytical tests
 python plot.py                         # or: python plot.py --save plot.png
 ```
 
-The C++ simulator writes `results.csv` (time and V1…Vn) and `events.csv` (fault and switch times) to the current directory, and `plot.py` plots them. To change the circuit, edit [`src/circuit.cpp`](src/circuit.cpp) and rebuild. The time step and simulation length are in [`src/config.h`](src/config.h).
+The C++ simulator writes `results.csv` (time and V1…Vn), `currents.csv` (branch currents and machine quantities) and `events.csv` (fault and switch times) to the current directory, and `plot.py` plots the voltages. To change the built-in circuit, edit [`src/circuit.cpp`](src/circuit.cpp) and rebuild. The default time step and simulation length are in [`src/config.h`](src/config.h); a netlist can set its own with a `.tran dt tstop` line.
 
 ### Python version
 
@@ -157,6 +163,9 @@ It opens in your browser at `http://127.0.0.1:8765`. Press **Ctrl+C** in the ter
 - **Node numbers:** they are assigned automatically, left to right, and shown as teal badges. They are the V1, V2… in the plots.
 - **Problems:** short-circuited parts, unconnected terminals (red ring), a missing ground and ideal sources without a grounded terminal are listed in the right panel and the **Netlist** tab.
 - **Run (F5):** runs the C++ or Python simulator, or **Both (compare)**, and plots every node voltage, with faults shaded and switch operations dashed. Hover over a plot to read values. In compare mode the summary shows both run times, the speed-up and the largest Python − C++ difference.
+- **Currents:** choose *Currents* above the plots to see the branch current of every element, and the machines' speed, rotor angle, power and torque. Type part of a name in *Show* to filter.
+- **Run settings:** with nothing selected, the right panel has the time step and duration of the run (written into the file as a `.tran` line).
+- **More components:** lines (π and Bergeron), transformers, surge arresters, and diodes and thyristors (single-phase mode) or the coupled R-L branch and the generator and motor (three-phase mode). Breakers can open at a current zero, and sources can have an internal inductance (sequence impedance for three-phase sources).
 - **Save (Ctrl+S):** writes `circuits/<name>.net`, an ordinary netlist that also runs with `.\run.bat circuits\<name>.net`. The drawing is stored in a `#@layout` comment line, so **Open…** can bring it back. Netlists without a drawing (for example hand-written ones) can be opened and run but not edited.
 
 The editor is [`gui/index.html`](gui/index.html) (plain JavaScript and SVG, no downloads), [`gui/schematic.js`](gui/schematic.js) (drawing → netlist, tested with `node gui/test_schematic.js`) and [`gui/server.py`](gui/server.py) (Python standard library only).
@@ -177,7 +186,7 @@ Choose **3-phase** in the selector at the top of the editor. Single-phase mode i
 
 The editor writes an ordinary single-phase netlist with three elements per part (names ending in `.a`, `.b`, `.c`). Node *k* of the drawing becomes netlist nodes 3k−2 (a), 3k−1 (b) and 3k (c). So the C++ and Python simulators, `run.bat` and `compare.py` run three-phase circuits unchanged.
 
-**Limitation:** the phases are not magnetically coupled. Lines, loads and sources are modelled per phase, wye-connected to ground, with no mutual inductance and no zero-sequence coupling. In a single-line-to-ground fault, the healthy phases therefore keep exactly their pre-fault voltages, where a real system would show some rise. Phase-to-phase faults do couple the phases.
+**Coupling between phases:** R, L, C, sources without impedance, switches and faults are modelled per phase. For realistic unbalanced studies, use the coupled parts: *Coupled RL*, *Line π* and *Line TL* in three-phase mode, a three-phase source with sequence impedance (L1, R0, L0), three-phase transformers and machines. With those, the healthy phases rise during a single-line-to-ground fault as they do in a real system.
 
 [`circuits/example3ph.net`](circuits/example3ph.net) is a small three-phase example, generated by [`circuits/make_example3ph.py`](circuits/make_example3ph.py):
 - a source and line feeding a load bus;
@@ -190,18 +199,58 @@ Before the fault, Va + Vb + Vc = 0 at every bus to within 10⁻¹² V. The only 
 
 Node `0` is ground, and other nodes are numbered `1, 2, 3, ...`.
 
-**Netlist file:** both versions can read a plain-text netlist (`emtsim file.net`, `python main.py file.net`), so one file defines the circuit for both. Put one element per line, and use `#` to start a comment:
+**Netlist file:** both versions can read a plain-text netlist (`emtsim file.net`, `python main.py file.net`), so one file defines the circuit for both. Put one element per line, and use `#` to start a comment. The first word of the comment names the element in the recorded currents:
 
 ```
-R  1 2  0.2                    # from to ohm
-L  2 3  3e-3                   # from to henry
-C  3 0  30e-6                  # from to farad
-V  0 1  325 0 50 0.1           # from to peak-V angle(deg) Hz [resistance]; no resistance = ideal
-SW 3 4  closed 0.055 0.080     # from to closed|open, then switching times (s)
-F  6 0  0.020 0.040            # from to t_apply [t_clear]
+.tran 50e-6 0.2                # time step and duration (s); before the elements; default 100 us, 0.1 s
+R  1 2  0.2                    # R12      from to ohm
+L  2 3  3e-3                   # L23      from to henry
+C  3 0  30e-6                  # C1       from to farad
+V  0 1  325 0 50 0.1           # VS1      from to peak-V angle(deg) Hz [resistance]; no resistance = ideal
+SW 3 4  closed 0.055 0.080     # SW1      from to closed|open, then switching times (s)
+F  6 0  0.020 0.040            # F1       from to t_apply [t_clear]
 ```
 
 The readers are [`netlist.py`](netlist.py) and [`src/netlist.cpp`](src/netlist.cpp).
+
+### Element reference
+
+Optional parameters are in brackets and can also be given as `key=value`. Three-phase elements list the nodes of phases a, b, c.
+
+| Element | Netlist line | Notes |
+|---|---|---|
+| Resistor, inductor, capacitor | `R a b ohm`, `L a b henry`, `C a b farad` | |
+| Voltage source | `V a b peak angle freq [R] [L]` | R > 0: Norton. With L: ideal source behind series R + L (needs one terminal on ground) |
+| Three-phase source | `V3 a b c peak angle freq [R1 L1 [R0 L0]]` | Positive sequence, star-connected to ground; with L1: behind a coupled sequence impedance |
+| Switch / breaker | `SW a b closed\|open t1 t2 ... [czero] [chop=A] [ron=] [roff=]` | Toggles at each time. `czero`: an opening command waits for the next current zero; `chop=A` also opens when the current falls below A |
+| Fault | `F a b t_apply [t_clear] [ron=] [roff=]` | |
+| Coupled R-L (3φ) | `RL3 a1 b1 c1 a2 b2 c2 R1 L1 [R0 L0]` | Series branch with self and mutual values from sequence data |
+| Line, nominal pi | `PI a b R L C`, `PI3 a1 b1 c1 a2 b2 c2 R1 L1 C1 [R0 L0 C0]` | Totals for the line; half the capacitance at each end |
+| Line, Bergeron | `TL k m Zc tau [R]`, `TL3 ka kb kc ma mb mc Z1 tau1 Z0 tau0 [R1 R0]` | Travelling waves with travel time tau (at least one time step); R lumped as R/4, R/2, R/4; TL3 uses Clarke modes (transposed line) |
+| Transformer | `XF p q s t S V1 V2 f x r [im=%] [knee=pu] [lsat=pu]` | Primary p-q, secondary s-t. Leakage x, r in per unit; magnetising current im (default 1 %); knee > 0 adds a two-slope saturation curve |
+| Three-phase transformer | `XF3 a1 b1 c1 a2 b2 c2 conn S V1 V2 f x r [im=] [knee=] [lsat=]` | conn: `YNyn0`, `YNd1`, `YNd11`, `Dyn1`, `Dyn11`, `Yy0`, `Dd0` (line-to-line voltages) |
+| Saturable inductor | `LSAT a b i1 flux1 i2 flux2 ...` | Symmetric piecewise-linear flux-current curve |
+| Surge arrester | `MOV a b Vref [Iref] [q]` | i = Iref (v/Vref)^q, default Iref 1 kA, q 26 |
+| Diode | `D a k [ron=] [roff=] [vf=]` | Anode a, cathode k |
+| Thyristor | `THY a k alpha freq [ref=deg] [width=deg] [ron=] [roff=]` | Gate fired while (360 f t + ref) mod 360 is between alpha and alpha + width |
+| Synchronous machine | `SM a b c S V f H xd2 ra E delta0 Pm [d=]` | Classical model: EMF E behind xd'' with the swing equation; records speed, rotor angle and power |
+| Induction machine | `IM a b c S V f poles rs xls rr xlr xm H Tload [speed0=]` | Voltage behind transient inductance; per-unit parameters; load torque ~ speed²; records speed and torque |
+
+Machines are given in per unit on their own rating (S in VA, V line-to-line rms). Composite elements (sources with impedance, transformers, machines) create internal nodes, numbered above the highest node in the file; they are not recorded.
+
+### New example studies
+
+<p align="center"><img alt="Example studies with the new elements" src="docs/examples_new_elements.png" width="900"></p>
+
+| File | Study |
+|---|---|
+| [`circuits/fault_clearing.net`](circuits/fault_clearing.net) | 132 kV line with a single-line-to-ground fault, breaker poles opening at their current zeros, surge arresters, and reclosing at a voltage zero, with saturation inrush in the 132/33 kV YNd1 transformer |
+| [`circuits/line_energisation.net`](circuits/line_energisation.net) | Energising a 100 km, 230 kV Bergeron line at the voltage peak: about 2.3 pu at the open end, limited to about 1.55 pu by arresters |
+| [`circuits/transformer_inrush.net`](circuits/transformer_inrush.net) | Energising an unloaded transformer at a voltage zero: about 350 times the rated magnetising current with a saturating core |
+| [`circuits/rectifier.net`](circuits/rectifier.net) | Six-pulse thyristor bridge (alpha = 30 deg; 468 V against 465 V from 1.35 V cos alpha minus the commutation drop) and a diode bridge with a DC capacitor |
+| [`circuits/machines.net`](circuits/machines.net) | Induction motor started direct on line, then a three-phase fault next to a synchronous generator: the rotor swings to about 72 deg and recovers |
+
+The figure is generated by [`docs/make_examples_figure.py`](docs/make_examples_figure.py).
 
 **C++:** circuits are built in `buildCircuit()` in [`src/circuit.cpp`](src/circuit.cpp).
 
@@ -246,12 +295,11 @@ elemet_list = [E1, E2, E3, E4, E5, SW1, F1]
 
 The Python elements take the same parameters: `el.RLC(brnType="R"|"L"|"C", value=...)`, `el.Source(magnitude, angle, frequency, resistance)`, `el.Switch(Ron, Roff, closed, t_switch)` and `el.Fault(Ron, Roff, t_apply, t_clear)`, where `t_clear=None` means a permanent fault.
 
-Simulation settings are in [`src/config.h`](src/config.h) and [`config.py`](config.py):
+The default simulation settings are in [`src/config.h`](src/config.h) and [`config.py`](config.py); a netlist's `.tran dt tstop` line overrides them for that circuit:
 
 ```cpp
-constexpr double Dt = 100e-6;                    // time step (s)
-constexpr double srtTime = 0.0;                  // start time (s)
-constexpr double stpTime = srtTime + 1000 * Dt;  // stop time (s)
+constexpr double defaultDt = 100e-6;               // time step (s)
+constexpr double defaultStop = 1000 * defaultDt;   // stop time (s)
 ```
 
 ## How it works
@@ -334,10 +382,11 @@ The C++ solver is a port of the Python version. On all three example networks th
 
 ## Limitations and ideas
 
-- Single-phase only, with no transmission-line models (Bergeron or frequency-dependent)
-- No nonlinear elements (surge arresters, saturable transformers)
-- Faults clear at a fixed time rather than at a current zero
-- The trapezoidal rule can produce numerical oscillations after switching inductive circuits. Critical damping adjustment (CDA) is a known fix.
+- No frequency-dependent line model (the Bergeron line has constant parameters and lumped losses)
+- Breakers open at a current zero detected at a time step, without interpolating the exact instant; there is no arc model
+- The machine models are reduced: the synchronous machine is the classical model (constant EMF behind xd'', no excitation or governor control), and the induction machine has no saturation and a star point connected to ground
+- Non-linear elements are piecewise linear and solved by re-solving the step (no compensation method); a step that does not settle within 50 iterations is reported
+- The trapezoidal rule can produce numerical oscillations after switching inductive circuits (for example diodes turning off). Critical damping adjustment (CDA) is a known fix; snubbers help.
 - The minimum-degree ordering is a simple O(n²) implementation. It takes milliseconds at 1,000 nodes, but an approximate minimum degree (AMD) ordering would be needed for networks of tens of thousands of nodes.
 - Δt = 100 µs resolves only about 5 samples per cycle of the 1–2 kHz LC resonances in the 100-node network. Use a smaller time step for studies where those frequencies matter.
 - The built-in examples are defined in code twice (`src/circuit.cpp` and `dataloader.py`). Use a netlist file to define a circuit once for both versions.

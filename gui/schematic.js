@@ -32,6 +32,24 @@
   const PH = ['a', 'b', 'c'];
   const STATE = { kind: 'select', options: ['closed', 'open'], def: 'closed' };
   const POLES = { key: 'mode', kind: 'select', options: ['together', 'independent'], def: 'together' };
+  const OPENS = { key: 'opens', label: 'Opening', kind: 'select', options: ['at the time', 'at current zero'], def: 'at the time' };
+  const XFPARAMS = [
+    { key: 'S', label: 'Rating', unit: 'VA', def: '1M' },
+    { key: 'v1', label: 'Primary voltage (rms, line-to-line for 3φ)', unit: 'V', def: '11k' },
+    { key: 'v2', label: 'Secondary voltage (rms, line-to-line for 3φ)', unit: 'V', def: '400' },
+    { key: 'freq', label: 'Frequency', unit: 'Hz', def: '50' },
+    { key: 'x', label: 'Leakage reactance', unit: 'pu', def: '0.06' },
+    { key: 'r', label: 'Winding resistance', unit: 'pu', def: '0.01' },
+    { key: 'im', label: 'Magnetising current (0 = none)', unit: '%', def: '1' },
+    { key: 'knee', label: 'Saturation knee (blank = linear core)', unit: 'pu', def: '', optional: true },
+    { key: 'lsat', label: 'Saturated inductance (blank = 2 x leakage)', unit: 'pu', def: '', optional: true }];
+  const MOVPARAMS = [
+    { key: 'vref', label: 'Reference voltage (peak)', unit: 'V', def: '1k' },
+    { key: 'iref', label: 'Current at the reference voltage', unit: 'A', def: '1k' },
+    { key: 'q', label: 'Exponent q (i = Iref (v/Vref)^q)', unit: '', def: '26' }];
+  const RONOFF = [
+    { key: 'ron', label: 'On resistance', unit: 'Ω', def: '1m' },
+    { key: 'roff', label: 'Off resistance', unit: 'Ω', def: '1meg' }];
 
   const TYPES = {
     R: { label: 'Resistor', prefix: 'R', params: [
@@ -44,14 +62,32 @@
       { key: 'mag', label: 'Peak voltage', unit: 'V', def: '325' },
       { key: 'angle', label: 'Angle', unit: '°', def: '0' },
       { key: 'freq', label: 'Frequency', unit: 'Hz', def: '50' },
-      { key: 'r', label: 'Internal resistance (blank or 0 = ideal)', unit: 'Ω', def: '0.1', optional: true }] },
+      { key: 'r', label: 'Internal resistance (blank or 0 = ideal)', unit: 'Ω', def: '0.1', optional: true },
+      { key: 'l', label: 'Series inductance (blank = none; needs one end on ground)', unit: 'H', def: '', optional: true }] },
     SW: { label: 'Switch', prefix: 'SW', params: [
       Object.assign({ key: 'state', label: 'Initial state' }, STATE),
-      { key: 'times', label: 'Switching times (toggles at each)', unit: 's', kind: 'list', def: '50m', optional: true }] },
+      { key: 'times', label: 'Switching times (toggles at each)', unit: 's', kind: 'list', def: '50m', optional: true },
+      OPENS] },
     F: { label: 'Fault', prefix: 'F', params: [
       { key: 't_apply', label: 'Applied at', unit: 's', def: '20m' },
       { key: 't_clear', label: 'Cleared at (blank = permanent)', unit: 's', def: '40m', optional: true }] },
     GND: { label: 'Ground', prefix: 'GND', params: [] },
+    PI: { label: 'Line (nominal pi)', prefix: 'LN', params: [
+      { key: 'r', label: 'Series resistance (total)', unit: 'Ω', def: '1' },
+      { key: 'l', label: 'Series inductance (total)', unit: 'H', def: '10m' },
+      { key: 'c', label: 'Shunt capacitance (total, half at each end)', unit: 'F', def: '1u' }] },
+    TL: { label: 'Line (travelling wave, Bergeron)', prefix: 'TL', params: [
+      { key: 'zc', label: 'Surge impedance', unit: 'Ω', def: '400' },
+      { key: 'tau', label: 'Travel time (at least one time step)', unit: 's', def: '1m' },
+      { key: 'r', label: 'Series resistance (total)', unit: 'Ω', def: '0', optional: true }] },
+    XF: { label: 'Transformer', prefix: 'T', params: XFPARAMS },
+    MOV: { label: 'Surge arrester', prefix: 'A', params: MOVPARAMS },
+    D: { label: 'Diode', prefix: 'D', params: RONOFF.concat([{ key: 'vf', label: 'Forward voltage', unit: 'V', def: '0' }]) },
+    THY: { label: 'Thyristor', prefix: 'TH', params: [
+      { key: 'alpha', label: 'Firing angle', unit: '°', def: '30' },
+      { key: 'freq', label: 'Frequency of the gate timing', unit: 'Hz', def: '50' },
+      { key: 'ref', label: 'Reference angle (gate phase = 360 f t + ref)', unit: '°', def: '0' },
+      { key: 'width', label: 'Gate pulse width', unit: '°', def: '120' }].concat(RONOFF) },
 
     // ---- three-phase
     R3: { label: 'Resistor (3-phase)', prefix: 'R', three: true, base: 'R', params: [
@@ -64,14 +100,18 @@
       { key: 'mag', label: 'Peak phase voltage (line to ground)', unit: 'V', def: '325' },
       { key: 'angle', label: 'Angle of phase a (b = a − 120°, c = a + 120°)', unit: '°', def: '0' },
       { key: 'freq', label: 'Frequency', unit: 'Hz', def: '50' },
-      { key: 'r', label: 'Internal resistance per phase (blank or 0 = ideal)', unit: 'Ω', def: '0.1', optional: true }] },
+      { key: 'r', label: 'Internal resistance R1 (blank or 0 = ideal)', unit: 'Ω', def: '0.1', optional: true },
+      { key: 'l1', label: 'Source inductance L1 (blank = none; needs the − end on ground)', unit: 'H', def: '', optional: true },
+      { key: 'r0', label: 'Zero-sequence resistance R0 (blank = R1)', unit: 'Ω', def: '', optional: true },
+      { key: 'l0', label: 'Zero-sequence inductance L0 (blank = L1)', unit: 'H', def: '', optional: true }] },
     SW3: { label: 'Switch (3-phase)', prefix: 'SW', three: true, params: [
       Object.assign({}, POLES, { label: 'Poles' }),
       Object.assign({ key: 'state', label: 'Initial state', when: 'together' }, STATE),
       { key: 'times', label: 'Switching times (toggles at each)', unit: 's', kind: 'list', def: '50m', optional: true, when: 'together' },
     ].concat(...PH.map((p) => [
       Object.assign({ key: 'state_' + p, label: 'Pole ' + p + ': initial state', when: 'independent' }, STATE),
-      { key: 'times_' + p, label: 'Pole ' + p + ': switching times', unit: 's', kind: 'list', def: '50m', optional: true, when: 'independent' }])) },
+      { key: 'times_' + p, label: 'Pole ' + p + ': switching times', unit: 's', kind: 'list', def: '50m', optional: true, when: 'independent' }]))
+      .concat([OPENS]) },
     F3: { label: 'Fault (3-phase)', prefix: 'F', three: true, single: true, params: [
       { key: 'kind', label: 'Fault type (-g = to ground)', kind: 'select',
         options: ['a-g', 'b-g', 'c-g', 'ab', 'bc', 'ca', 'ab-g', 'bc-g', 'ca-g', 'abc', 'abc-g'], def: 'a-g' },
@@ -81,11 +121,58 @@
     ].concat(...PH.map((p) => [
       { key: 't_apply_' + p, label: 'Phase ' + p + ': applied at', unit: 's', def: '20m', when: 'independent' },
       { key: 't_clear_' + p, label: 'Phase ' + p + ': cleared at (blank = permanent)', unit: 's', def: '40m', optional: true, when: 'independent' }])) },
+    PI3: { label: 'Line 3φ (nominal pi)', prefix: 'LN', three: true, params: [
+      { key: 'r1', label: 'R1 positive sequence (total)', unit: 'Ω', def: '1' },
+      { key: 'l1', label: 'L1 positive sequence (total)', unit: 'H', def: '10m' },
+      { key: 'c1', label: 'C1 positive sequence (total)', unit: 'F', def: '1u' },
+      { key: 'r0', label: 'R0 zero sequence (blank = R1)', unit: 'Ω', def: '', optional: true },
+      { key: 'l0', label: 'L0 zero sequence (blank = L1)', unit: 'H', def: '', optional: true },
+      { key: 'c0', label: 'C0 zero sequence (blank = C1)', unit: 'F', def: '', optional: true }] },
+    RL3: { label: 'Coupled R-L 3φ', prefix: 'Z', three: true, params: [
+      { key: 'r1', label: 'R1 positive sequence', unit: 'Ω', def: '1' },
+      { key: 'l1', label: 'L1 positive sequence', unit: 'H', def: '10m' },
+      { key: 'r0', label: 'R0 zero sequence (blank = R1)', unit: 'Ω', def: '', optional: true },
+      { key: 'l0', label: 'L0 zero sequence (blank = L1)', unit: 'H', def: '', optional: true }] },
+    TL3: { label: 'Line 3φ (travelling wave, Bergeron)', prefix: 'TL', three: true, params: [
+      { key: 'z1', label: 'Z1 surge impedance, positive sequence', unit: 'Ω', def: '300' },
+      { key: 'tau1', label: 'Travel time, positive sequence', unit: 's', def: '1m' },
+      { key: 'z0', label: 'Z0 surge impedance, zero sequence', unit: 'Ω', def: '600' },
+      { key: 'tau0', label: 'Travel time, zero sequence', unit: 's', def: '1.3m' },
+      { key: 'r1', label: 'R1 series resistance (total)', unit: 'Ω', def: '0', optional: true },
+      { key: 'r0', label: 'R0 series resistance (total, blank = R1)', unit: 'Ω', def: '', optional: true }] },
+    XF3: { label: 'Transformer 3φ', prefix: 'T', three: true, params: [
+      { key: 'conn', label: 'Vector group', kind: 'select', options: ['YNyn0', 'YNd1', 'YNd11', 'Dyn1', 'Dyn11', 'Yy0', 'Dd0'], def: 'YNd1' }]
+      .concat(XFPARAMS) },
+    MOV3: { label: 'Surge arrester 3φ', prefix: 'A', three: true, params: MOVPARAMS },
+    SM: { label: 'Synchronous machine', prefix: 'G', three: true, single: true, params: [
+      { key: 'S', label: 'Rating', unit: 'VA', def: '20M' },
+      { key: 'v', label: 'Voltage (rms, line-to-line)', unit: 'V', def: '11k' },
+      { key: 'freq', label: 'Frequency', unit: 'Hz', def: '50' },
+      { key: 'H', label: 'Inertia constant H', unit: 's', def: '3' },
+      { key: 'xd2', label: 'Subtransient reactance xd"', unit: 'pu', def: '0.2' },
+      { key: 'ra', label: 'Armature resistance', unit: 'pu', def: '0.003' },
+      { key: 'E', label: 'Internal EMF', unit: 'pu', def: '1.1' },
+      { key: 'delta0', label: 'Initial rotor angle', unit: '°', def: '20' },
+      { key: 'Pm', label: 'Mechanical power', unit: 'pu', def: '0.8' },
+      { key: 'd', label: 'Damping', unit: 'pu', def: '2' }] },
+    IM: { label: 'Induction motor', prefix: 'M', three: true, single: true, params: [
+      { key: 'S', label: 'Rating', unit: 'VA', def: '2M' },
+      { key: 'v', label: 'Voltage (rms, line-to-line)', unit: 'V', def: '11k' },
+      { key: 'freq', label: 'Frequency', unit: 'Hz', def: '50' },
+      { key: 'poles', label: 'Poles', unit: '', def: '4' },
+      { key: 'rs', label: 'Stator resistance', unit: 'pu', def: '0.01' },
+      { key: 'xls', label: 'Stator leakage reactance', unit: 'pu', def: '0.1' },
+      { key: 'rr', label: 'Rotor resistance', unit: 'pu', def: '0.04' },
+      { key: 'xlr', label: 'Rotor leakage reactance', unit: 'pu', def: '0.1' },
+      { key: 'xm', label: 'Magnetising reactance', unit: 'pu', def: '3' },
+      { key: 'H', label: 'Inertia constant H', unit: 's', def: '0.3' },
+      { key: 'Tload', label: 'Load torque at rated speed (~ speed²)', unit: 'pu', def: '0.6' },
+      { key: 'speed0', label: 'Initial speed', unit: 'pu', def: '0' }] },
   };
 
   // Single-phase <-> three-phase equivalents (used when the drawing's mode is changed)
-  const TO3 = { R: 'R3', L: 'L3', C: 'C3', V: 'V3', SW: 'SW3', F: 'F3' };
-  const TO1 = { R3: 'R', L3: 'L', C3: 'C', V3: 'V', SW3: 'SW', F3: 'F' };
+  const TO3 = { R: 'R3', L: 'L3', C: 'C3', V: 'V3', SW: 'SW3', F: 'F3', PI: 'PI3', TL: 'TL3', XF: 'XF3', MOV: 'MOV3' };
+  const TO1 = { R3: 'R', L3: 'L', C3: 'C', V3: 'V', SW3: 'SW', F3: 'F', PI3: 'PI', TL3: 'TL', XF3: 'XF', MOV3: 'MOV' };
   const isThree = (type) => !!(TYPES[type] && TYPES[type].three);
 
   // Parameters shown/used for a component: those whose 'when' matches its pole/timing mode
@@ -244,7 +331,7 @@
     const parts = model.components.filter((c) => c.type !== 'GND');
     if (parts.length === 0) errors.push('The circuit is empty: add some components.');
     if (!model.components.some((c) => c.type === 'GND')) errors.push('No ground: add a ground symbol (node 0).');
-    if (!parts.some((c) => c.type === 'V' || c.type === 'V3')) warnings.push('There is no voltage source.');
+    if (!parts.some((c) => ['V', 'V3', 'SM'].includes(c.type))) warnings.push('There is no voltage source.');
 
     const names = new Map();
     for (const c of parts) names.set(c.name, (names.get(c.name) || 0) + 1);
@@ -303,11 +390,24 @@
         const r = num('r', 'Internal resistance', true);
         if (mag == null || ang == null || f == null || r === undefined) continue;
         const ideal = !(r > 0);
-        if (ideal && a !== 0 && b !== 0) { bad('an ideal source (no internal resistance) needs one terminal on ground.'); continue; }
+        const lk = c.type === 'V3' ? 'l1' : 'l';
+        const lv = num(lk, 'Source inductance', true);
+        if (lv === undefined) continue;
+        if ((ideal || lv > 0) && a !== 0 && b !== 0) {
+          bad('an ideal source or a source with inductance needs one terminal on ground.'); continue;
+        }
+        if (lv > 0 && c.type === 'V3') {   // three-phase EMF behind a coupled (sequence) impedance
+          if (a !== 0) { bad('a three-phase source with impedance needs its − end on ground.'); continue; }
+          const r0 = num('r0', 'R0', true), l0 = num('l0', 'L0', true);
+          if (r0 === undefined || l0 === undefined) continue;
+          lines.push('V3 ' + pn(b, 0) + ' ' + pn(b, 1) + ' ' + pn(b, 2) + '  ' + fmt(mag) + ' ' + fmt(ang) + ' ' + fmt(f) + '  ' +
+                     fmt(r || 0) + ' ' + fmt(lv) + ' ' + fmt(r0 != null ? r0 : (r || 0)) + ' ' + fmt(l0 != null ? l0 : lv) + tag(null));
+          continue;
+        }
         const shift = [0, -120, 120];
         for (const p of phaseList) {
           lines.push('V ' + pn(a, p || 0) + ' ' + pn(b, p || 0) + '  ' + fmt(mag) + ' ' + fmt(ang + shift[p || 0]) + ' ' + fmt(f) +
-                     (ideal ? '' : ' ' + fmt(r)) + tag(p));
+                     (lv > 0 ? ' ' + fmt(r || 0) + ' ' + fmt(lv) : ideal ? '' : ' ' + fmt(r)) + tag(p));
         }
       } else if (c.type === 'SW' || c.type === 'SW3') {
         const indep = c.type === 'SW3' && P.mode === 'independent';
@@ -318,7 +418,8 @@
           const tl = times(tk, (indep ? 'pole ' + PH[p] + ' ' : '') + 'switching times');
           if (!tl) { ok = false; break; }
           const state = P[sk] === 'open' ? 'open' : 'closed';
-          out.push('SW ' + pn(a, p || 0) + ' ' + pn(b, p || 0) + '  ' + state + (tl.length ? ' ' + tl.map(fmt).join(' ') : '') + tag(p));
+          out.push('SW ' + pn(a, p || 0) + ' ' + pn(b, p || 0) + '  ' + state + (tl.length ? ' ' + tl.map(fmt).join(' ') : '') +
+                   (P.opens === 'at current zero' ? ' czero' : '') + tag(p));
         }
         if (ok) lines.push(...out);
       } else if (c.type === 'F') {
@@ -355,6 +456,68 @@
             lines.push('F ' + pn(a, p) + ' ' + pn(a, q) + '  ' + timing[p] + '   # ' + c.name + '.' + PH[p] + PH[q]);
           }
         }
+      } else {
+        // parameters in the order the netlist expects; optional ones may be blank (null)
+        const vals = (list) => {
+          const out = [];
+          for (const [k, label, optional] of list) {
+            const v = num(k, label, optional);
+            if (v === undefined || (v === null && !optional)) return null;
+            out.push(v);
+          }
+          return out;
+        };
+        const nodes3 = (n) => [0, 1, 2].map((p) => pn(n, p)).join(' ');
+        const both3 = nodes3(a) + ' ' + nodes3(b);
+        const or = (x, y) => (x != null ? x : y);
+        const kw = (key, v) => (v != null ? ' ' + key + '=' + fmt(v) : '');
+        if (c.type === 'PI') {
+          const v = vals([['r', 'R'], ['l', 'L'], ['c', 'C']]);
+          if (v) lines.push('PI ' + a + ' ' + b + '  ' + v.map(fmt).join(' ') + tag(null));
+        } else if (c.type === 'TL') {
+          const v = vals([['zc', 'Surge impedance'], ['tau', 'Travel time'], ['r', 'R', true]]);
+          if (v) lines.push('TL ' + a + ' ' + b + '  ' + fmt(v[0]) + ' ' + fmt(v[1]) + ' ' + fmt(or(v[2], 0)) + tag(null));
+        } else if (c.type === 'XF' || c.type === 'XF3') {
+          if (a === 0 || b === 0) { bad('both transformer windings must be on a bus (not on ground).'); continue; }
+          const v = vals([['S', 'Rating'], ['v1', 'Primary voltage'], ['v2', 'Secondary voltage'], ['freq', 'Frequency'],
+                          ['x', 'Leakage reactance'], ['r', 'Winding resistance'], ['im', 'Magnetising current'],
+                          ['knee', 'Knee', true], ['lsat', 'Saturated inductance', true]]);
+          if (!v) continue;
+          const head = c.type === 'XF' ? 'XF ' + a + ' 0 ' + b + ' 0  ' : 'XF3 ' + both3 + '  ' + (P.conn || 'YNd1') + ' ';
+          lines.push(head + v.slice(0, 6).map(fmt).join(' ') + kw('im', v[6]) + kw('knee', v[7]) + kw('lsat', v[8]) + tag(null));
+        } else if (c.type === 'MOV' || c.type === 'MOV3') {
+          const v = vals([['vref', 'Reference voltage'], ['iref', 'Reference current'], ['q', 'Exponent']]);
+          if (!v) continue;
+          for (const p of phaseList) lines.push('MOV ' + pn(a, p || 0) + ' ' + pn(b, p || 0) + '  ' + v.map(fmt).join(' ') + tag(p));
+        } else if (c.type === 'D') {
+          const v = vals([['ron', 'On resistance'], ['roff', 'Off resistance'], ['vf', 'Forward voltage', true]]);
+          if (v) lines.push('D ' + a + ' ' + b + ' ' + kw('ron', v[0]) + kw('roff', v[1]) + kw('vf', v[2]) + tag(null));
+        } else if (c.type === 'THY') {
+          const v = vals([['alpha', 'Firing angle'], ['freq', 'Frequency'], ['ref', 'Reference angle', true],
+                          ['width', 'Pulse width', true], ['ron', 'On resistance'], ['roff', 'Off resistance']]);
+          if (v) lines.push('THY ' + a + ' ' + b + '  ' + fmt(v[0]) + ' ' + fmt(v[1]) + kw('ref', v[2]) + kw('width', v[3]) +
+                            kw('ron', v[4]) + kw('roff', v[5]) + tag(null));
+        } else if (c.type === 'PI3') {
+          const v = vals([['r1', 'R1'], ['l1', 'L1'], ['c1', 'C1'], ['r0', 'R0', true], ['l0', 'L0', true], ['c0', 'C0', true]]);
+          if (v) lines.push('PI3 ' + both3 + '  ' + [v[0], v[1], v[2], or(v[3], v[0]), or(v[4], v[1]), or(v[5], v[2])].map(fmt).join(' ') + tag(null));
+        } else if (c.type === 'RL3') {
+          const v = vals([['r1', 'R1'], ['l1', 'L1'], ['r0', 'R0', true], ['l0', 'L0', true]]);
+          if (v) lines.push('RL3 ' + both3 + '  ' + [v[0], v[1], or(v[2], v[0]), or(v[3], v[1])].map(fmt).join(' ') + tag(null));
+        } else if (c.type === 'TL3') {
+          const v = vals([['z1', 'Z1'], ['tau1', 'Travel time 1'], ['z0', 'Z0'], ['tau0', 'Travel time 0'], ['r1', 'R1', true], ['r0', 'R0', true]]);
+          if (v) lines.push('TL3 ' + both3 + '  ' + [v[0], v[1], v[2], v[3], or(v[4], 0), or(v[5], or(v[4], 0))].map(fmt).join(' ') + tag(null));
+        } else if (c.type === 'SM' || c.type === 'IM') {
+          if (a === 0) { bad('a machine must be on a bus, not on ground.'); continue; }
+          const keys = c.type === 'SM'
+            ? [['S', 'Rating'], ['v', 'Voltage'], ['freq', 'Frequency'], ['H', 'H'], ['xd2', 'xd"'], ['ra', 'ra'], ['E', 'E'],
+               ['delta0', 'Initial angle'], ['Pm', 'Pm'], ['d', 'Damping', true]]
+            : [['S', 'Rating'], ['v', 'Voltage'], ['freq', 'Frequency'], ['poles', 'Poles'], ['rs', 'rs'], ['xls', 'xls'], ['rr', 'rr'],
+               ['xlr', 'xlr'], ['xm', 'xm'], ['H', 'H'], ['Tload', 'Load torque'], ['speed0', 'Initial speed', true]];
+          const v = vals(keys);
+          if (!v) continue;
+          const last = v.pop();
+          lines.push(c.type + ' ' + nodes3(a) + '  ' + v.map(fmt).join(' ') + kw(c.type === 'SM' ? 'd' : 'speed0', last) + tag(null));
+        }
       }
     }
 
@@ -372,6 +535,15 @@
       header.push('# Three-phase drawing: node k of the drawing is netlist node 3k-2 (phase a), 3k-1 (b) and 3k (c)');
     }
     header.push('');
+    // run settings: time step and stop time
+    const st = model.settings || {};
+    const dt = parseValue(st.dt), tstop = parseValue(st.tstop);
+    if (Number.isNaN(dt) || Number.isNaN(tstop)) errors.push('Time step and duration must be numbers.');
+    else if (dt != null || tstop != null) {
+      const d = dt != null ? dt : 100e-6, ts = tstop != null ? tstop : 0.1;
+      if (!(d > 0) || !(ts > d)) errors.push('Run settings: need 0 < time step < duration.');
+      else header.push('.tran ' + fmt(d) + ' ' + fmt(ts), '');
+    }
     const layout = '#@layout ' + JSON.stringify(serialize(model));
     const text = header.concat(lines, ['', layout]).join('\n') + '\n';
     return { text, lines, errors, warnings, phases, nodeCount: N, netlistNodes: phases * N, labels,
@@ -387,6 +559,7 @@
       wires: model.wires.map((w) => ({ x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 })),
     };
     if (model.phases === 3) out.phases = 3;
+    if (model.settings && (model.settings.dt || model.settings.tstop)) out.settings = Object.assign({}, model.settings);
     return out;
   }
 
@@ -402,6 +575,7 @@
       model: {
         v: 1,
         phases: data.phases === 3 ? 3 : 1,
+        settings: Object.assign({}, data.settings),
         components: (data.components || []).map((c) => ({ id: newId(), type: c.type, name: c.name, x: c.x, y: c.y, rot: c.rot || 0, params: Object.assign({}, c.params) })),
         wires: (data.wires || []).map((w) => ({ x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 })),
       },
@@ -429,7 +603,8 @@
   //           and a fault F3 becomes F to a new ground symbol below it.
   function convertPhases(model, phases) {
     const from = model.phases === 3 ? 3 : 1;
-    const out = { v: 1, phases, components: [], wires: model.wires.map((w) => Object.assign({}, w)) };
+    const out = { v: 1, phases, settings: Object.assign({}, model.settings), components: [],
+                  wires: model.wires.map((w) => Object.assign({}, w)) };
     if (from === phases) { out.components = model.components.map((c) => Object.assign({}, c, { params: Object.assign({}, c.params) })); return out; }
     for (const c of model.components) {
       const P = c.params || {};

@@ -175,6 +175,66 @@ check(S.parseFile('R 1 0 5\n').raw !== undefined, 'a netlist without a drawing l
   check(re.model.phases === 3 && eq(S.buildNetlist(re.model).lines, n3.lines), '3-phase drawing survives save -> load');
 }
 
+// ---------------------------------------------------------------- new components
+{
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const lines = (m) => { const r = S.buildNetlist(m); return { L: r.lines.map((l) => l.split('#')[0].trim()), r }; };
+  // single-phase: source with inductance, pi line, Bergeron line, transformer, arrester, diode, thyristor
+  const m1 = { components: [
+    comp('V', 'G', 0, 4, 270, { mag: '100', angle: '0', freq: '50', r: '0.1', l: '1m' }), gnd(0, 4),
+    comp('PI', 'LN', 0, 0, 0, { r: '1', l: '10m', c: '1u' }),
+    comp('TL', 'TL', 4, 0, 0, { zc: '400', tau: '1m', r: '' }),
+    comp('XF', 'T', 8, 0, 0, { S: '1M', v1: '11k', v2: '400', freq: '50', x: '0.06', r: '0.01', im: '1', knee: '1.15', lsat: '' }),
+    comp('MOV', 'A', 12, 0, 90, { vref: '600', iref: '1k', q: '26' }), gnd(12, 4),
+    comp('D', 'D', 12, 0, 0, { ron: '1m', roff: '1meg', vf: '' }),
+    comp('THY', 'TH', 16, 0, 0, { alpha: '30', freq: '50', ref: '60', width: '120', ron: '1m', roff: '1meg' }),
+    comp('R', 'RL', 20, 0, 90, { value: '10' }), gnd(20, 4)], wires: [], settings: { dt: '50u', tstop: '40m' } };
+  const a = lines(m1);
+  check(a.r.errors.length === 0, 'new single-phase components: no errors', a.r.errors.join('; '));
+  check(eq(a.L, ['V 0 1  100 0 50 0.1 0.001', 'PI 1 2  1 0.01 0.000001', 'TL 2 3  400 0.001 0', 'XF 3 0 4 0  1000000 11000 400 50 0.06 0.01 im=1 knee=1.15',
+                 'MOV 4 0  600 1000 26', 'D 4 5  ron=0.001 roff=1000000', 'THY 5 6  30 50 ref=60 width=120 ron=0.001 roff=1000000', 'R 6 0  10']),
+        'new single-phase components write the expected netlist lines', JSON.stringify(a.L));
+  check(/^\.tran 0\.00005 0\.04$/m.test(a.r.text), 'run settings are written as a .tran line');
+  // three-phase: source with sequence impedance, pi line, coupled RL, Bergeron line, transformer, arresters, machines
+  const m3 = { phases: 3, components: [
+    comp('V3', 'GRID', 0, 4, 270, { mag: '8981.6', angle: '0', freq: '50', r: '0.02', l1: '2m', r0: '', l0: '5m' }), gnd(0, 4),
+    comp('PI3', 'LN', 0, 0, 0, { r1: '1', l1: '10m', c1: '1u', r0: '3', l0: '', c0: '' }),
+    comp('RL3', 'Z', 4, 0, 0, { r1: '0.5', l1: '5m', r0: '', l0: '' }),
+    comp('TL3', 'TL', 8, 0, 0, { z1: '300', tau1: '1m', z0: '600', tau0: '1.3m', r1: '1', r0: '' }),
+    comp('XF3', 'T', 12, 0, 0, { conn: 'Dyn11', S: '2M', v1: '11k', v2: '400', freq: '50', x: '0.06', r: '0.01', im: '1', knee: '', lsat: '' }),
+    comp('MOV3', 'A', 16, 0, 90, { vref: '600', iref: '1k', q: '26' }), gnd(16, 4),
+    comp('SW3', 'BRK', 16, 0, 0, { mode: 'together', state: 'closed', times: '50m', opens: 'at current zero' }),
+    comp('IM', 'M', 20, 0, 0, { S: '100k', v: '400', freq: '50', poles: '4', rs: '0.01', xls: '0.1', rr: '0.04', xlr: '0.1', xm: '3', H: '0.3', Tload: '0.5', speed0: '' }),
+    comp('SM', 'G', 4, 0, 0, { S: '2M', v: '11k', freq: '50', H: '3', xd2: '0.2', ra: '0.003', E: '1.1', delta0: '20', Pm: '0.5', d: '2' })],
+    wires: [wire(20, 0, 22, 0)] };
+  const b3 = lines(m3);
+  check(b3.r.errors.length === 0, 'new three-phase components: no errors', b3.r.errors.join('; '));
+  const want3 = ['V3 1 2 3  8981.6 0 50  0.02 0.002 0.02 0.005', 'PI3 1 2 3 4 5 6  1 0.01 0.000001 3 0.01 0.000001',
+                 'RL3 4 5 6 7 8 9  0.5 0.005 0.5 0.005', 'TL3 7 8 9 10 11 12  300 0.001 600 0.0013 1 1',
+                 'XF3 10 11 12 13 14 15  Dyn11 2000000 11000 400 50 0.06 0.01 im=1',
+                 'MOV 13 0  600 1000 26', 'MOV 14 0  600 1000 26', 'MOV 15 0  600 1000 26',
+                 'SW 13 16  closed 0.05 czero', 'SW 14 17  closed 0.05 czero', 'SW 15 18  closed 0.05 czero',
+                 'IM 16 17 18  100000 400 50 4 0.01 0.1 0.04 0.1 3 0.3 0.5',
+                 'SM 4 5 6  2000000 11000 50 3 0.2 0.003 1.1 20 0.5 d=2'];
+  check(eq(b3.L, want3), 'new three-phase components write the expected netlist lines', JSON.stringify(b3.L));
+  // the C++ simulator accepts both netlists
+  const exe = path.join(__dirname, '..', 'build', 'emtsim.exe');
+  if (fs.existsSync(exe)) {
+    const os = require('os'), { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'emtsim-'));
+    for (const [nm, text] of [['single', a.r.text], ['three', b3.r.text]]) {
+      fs.writeFileSync(path.join(dir, nm + '.net'), text);
+      let ok = true, out = '';
+      try { out = execFileSync(exe, [path.join(dir, nm + '.net')], { cwd: dir, encoding: 'utf8' }); } catch (e) { ok = false; out = String(e.stderr || e); }
+      check(ok && /Done:/.test(out), 'the C++ simulator runs the ' + nm + '-phase netlist written by the editor', out.slice(-300));
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // mode conversion maps the new two-terminal parts
+  const c3 = S.convertPhases({ components: [comp('PI', 'LN', 0, 0, 0, { r: '1', l: '10m', c: '1u' })], wires: [] }, 3);
+  check(c3.components[0].type === 'PI3', 'converting to three-phase turns a PI line into a PI3 line');
+}
+
 if (process.argv.includes('--write-example')) {
   fs.writeFileSync(netPath, nl.text);
   console.log('Overwrote ' + netPath + ' with the original 8-node example and its drawing');
