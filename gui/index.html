@@ -125,7 +125,12 @@
   .card { border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px 2px; background: #fff; }
   .card .ttl { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; }
   .card .ttl span { font-weight: 400; color: var(--muted); }
-  .card canvas { width: 100%; height: 130px; display: block; }
+  .card canvas { width: 100%; height: 130px; display: block; cursor: crosshair; }
+  .card.wide { grid-column: 1 / -1; }
+  .card.wide canvas { height: 340px; }
+  .card .big { border: none; background: none; padding: 0 2px 0 8px; color: var(--muted); font-size: 13px; line-height: 1; }
+  .card .big:hover { color: var(--teal); }
+  .lnk { border: none; background: none; padding: 0 0 0 6px; color: var(--teal-d); text-decoration: underline; font-size: 12px; }
   .empty { color: var(--muted); padding: 20px; text-align: center; grid-column: 1 / -1; }
 
   .modal { position: fixed; inset: 0; background: rgba(15,20,30,.45); display: flex; align-items: center; justify-content: center; z-index: 10; }
@@ -930,6 +935,7 @@ async function run() {
   try {
     const meta = raw == null ? { phases: net.phases, drawNodes: net.nodeCount } : { phases: 1, drawNodes: 0 };
     results = Object.assign(await api('/api/run', { text: currentText(), engine }), meta);
+    plotZoom = null;
     const errs = ['cpp', 'python'].filter((k) => results[k] && results[k].error).map((k) => (k === 'cpp' ? 'C++' : 'Python') + ': ' + results[k].error);
     $('logText').textContent = ['cpp', 'python'].filter((k) => results[k]).map((k) =>
       '=== ' + (k === 'cpp' ? 'C++' : 'Python') + ' ===\n' + (results[k].error ? 'ERROR: ' + results[k].error + '\n' : '') + (results[k].log || '(no switching events)')).join('\n\n');
@@ -967,8 +973,13 @@ function fmtNum(v) {
 }
 
 const PHASE_COLORS = ['#D64545', '#E0A020', '#2F6FD6'];   // phases a, b, c
+const BIG_BUTTON = '<button class="big" title="Enlarge this plot">⤢</button>';
+const ZOOM_CHIP = '<span class="chip" id="zoomChip" style="display:none;background:#E3F4F2">zoom <b></b> ' +
+                  '<button class="lnk" onclick="setZoom(null)">Reset zoom</button></span>' +
+                  '<span class="legend">drag across a plot to zoom · wheel to zoom · double-click to reset · ⤢ to enlarge</span>';
 function renderResults() {
   const box = $('plots'), sum = $('summary');
+  plotItems = [];
   if (!results) { sum.innerHTML = ''; box.innerHTML = '<div class="empty">Draw a circuit and press ▶ Run to see the node voltages here.</div>'; return; }
   const cpp = results.cpp && !results.cpp.error ? results.cpp : null;
   const py = results.python && !results.python.error ? results.python : null;
@@ -995,7 +1006,7 @@ function renderResults() {
     chips.push(cpp && py ? '<span class="legend"><i></i>C++</span><span class="legend"><i class="py"></i>Python</span>'
                          : '<span class="legend"><i' + (cpp ? '' : ' class="py"') + '></i>' + (cpp ? 'C++' : 'Python') + '</span>');
   }
-  sum.innerHTML = chips.join('');
+  sum.innerHTML = chips.join('') + ZOOM_CHIP;
 
   let idx = parseFilter($('nodeFilter').value, groups);
   const MAXPLOTS = 60;
@@ -1010,7 +1021,7 @@ function renderResults() {
     const cols = three ? [3 * k, 3 * k + 1, 3 * k + 2] : [k];
     const peak = Math.max(...cols.map((j) => Math.max(...main.V[j].map(Math.abs))));
     const title = three ? 'Node ' + (k + 1) + ' <span style="margin-left:6px">a/b/c = V' + (3 * k + 1) + '–V' + (3 * k + 3) + '</span>' : main.names[k];
-    card.innerHTML = '<div class="ttl"><b>' + title + '</b><span>peak ' + fmtNum(peak) + ' V</span></div><canvas></canvas>';
+    card.innerHTML = '<div class="ttl"><b>' + title + '</b><span>peak ' + fmtNum(peak) + ' V' + BIG_BUTTON + '</span></div><canvas></canvas>';
     box.appendChild(card);
     const cv = card.querySelector('canvas');
     const series = [];
@@ -1021,11 +1032,10 @@ function renderResults() {
     });
     const item = { t: main.t, series, events: main.events, hover: null,
                    labels: three ? S.PH.map((p, j) => ({ name: p, s: series[j * (cpp && py ? 2 : 1)] })) : null };
-    drawPlot(cv, item);
-    cv.addEventListener('mousemove', (e) => { item.hover = e.offsetX; drawPlot(cv, item); });
-    cv.addEventListener('mouseleave', () => { item.hover = null; drawPlot(cv, item); });
+    attachPlot(card, cv, item);
   }
   if (!idx.length) box.innerHTML = '<div class="empty">No nodes match the filter.</div>';
+  updateZoomChip();
 }
 $('nodeFilter').addEventListener('input', renderResults);
 $('resultKind').addEventListener('change', () => {
@@ -1050,7 +1060,8 @@ function renderCurrents(cpp, py, main, sum, box) {
   if (capped) shown = shown.slice(0, MAX);
   sum.innerHTML = '<span class="chip"><b>' + groups.length + '</b> elements · <b>' + names.length + '</b> signals</span>' +
     '<span class="legend">currents flow from the first terminal into the element; [pu] and [deg] are machine quantities</span>' +
-    (capped ? '<span class="chip" style="background:#FFF6E6">showing the first ' + MAX + ': type part of a name in Show</span>' : '');
+    (capped ? '<span class="chip" style="background:#FFF6E6">showing the first ' + MAX + ': type part of a name in Show</span>' : '') +
+    ZOOM_CHIP;
   box.innerHTML = '';
   for (const g of shown) {
     const card = document.createElement('div');
@@ -1058,7 +1069,7 @@ function renderCurrents(cpp, py, main, sum, box) {
     const unit = /\[(.*)\]$/.exec(g.name);
     const u = unit ? unit[1] : 'A';
     const peak = Math.max(...g.cols.map((j) => Math.max(...main.I[j].map(Math.abs))));
-    card.innerHTML = '<div class="ttl"><b>' + g.name.replace(/</g, '&lt;') + '</b><span>peak ' + fmtNum(peak) + ' ' + u + '</span></div><canvas></canvas>';
+    card.innerHTML = '<div class="ttl"><b>' + g.name.replace(/</g, '&lt;') + '</b><span>peak ' + fmtNum(peak) + ' ' + u + BIG_BUTTON + '</span></div><canvas></canvas>';
     box.appendChild(card);
     const cv = card.querySelector('canvas');
     const series = [];
@@ -1069,48 +1080,69 @@ function renderCurrents(cpp, py, main, sum, box) {
     });
     const item = { t: main.t, series, events: main.events, hover: null, unit: u,
                    labels: g.cols.length === 3 ? S.PH.map((p, j) => ({ name: p, s: series[j * (cpp && py ? 2 : 1)] })) : null };
-    drawPlot(cv, item);
-    cv.addEventListener('mousemove', (e) => { item.hover = e.offsetX; drawPlot(cv, item); });
-    cv.addEventListener('mouseleave', () => { item.hover = null; drawPlot(cv, item); });
+    attachPlot(card, cv, item);
   }
   if (!shown.length) box.innerHTML = '<div class="empty">No element names match the filter.</div>';
+  updateZoomChip();
 }
+
+// Time window shown by all plots (null = everything); shared, so the plots stay aligned
+let plotZoom = null;
+let plotItems = [];      // { cv, item } of the plots on screen
 
 function drawPlot(cv, item) {
   const dpr = window.devicePixelRatio || 1;
   const W = cv.clientWidth, H = cv.clientHeight;
-  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
   const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
-  const L = 42, R = 6, T = 6, B = 16, pw = W - L - R, ph = H - T - B;
-  const t = item.t, n = t.length, t0 = t[0], t1 = t[n - 1];
+  const L = 46, R = 6, T = 6, B = 16, pw = W - L - R, ph = H - T - B;
+  const t = item.t, n = t.length;
+  const t0 = plotZoom ? plotZoom[0] : t[0], t1 = plotZoom ? plotZoom[1] : t[n - 1];
+  // samples in the window (one more on each side so the lines reach the edges)
+  let i0 = 0, i1 = n - 1;
+  while (i0 < n - 1 && t[i0 + 1] < t0) i0++;
+  while (i1 > 0 && t[i1 - 1] > t1) i1--;
   let lo = Infinity, hi = -Infinity;
-  for (const s of item.series) for (const v of s.v) { if (v < lo) lo = v; if (v > hi) hi = v; }
-  if (!(hi > lo)) { lo -= 1; hi += 1; }
+  for (const s of item.series) for (let i = i0; i <= i1; i++) { const v = s.v[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (!(hi > lo)) { const m = Math.abs(hi) || 1; lo -= 0.01 * m; hi += 0.01 * m; }
   const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
   const X = (x) => L + (x - t0) / ((t1 - t0) || 1) * pw;
   const Y = (v) => T + (hi - v) / (hi - lo) * ph;
+  item.geom = { L, pw, t0, t1 };
+  g.save();
+  g.beginPath(); g.rect(L, T, pw, ph); g.clip();
   g.fillStyle = 'rgba(214,69,69,0.10)';
-  for (const [a, b] of item.events.faults) g.fillRect(X(a), T, X(b == null ? t1 : b) - X(a), ph);
+  for (const [a, b] of item.events.faults) g.fillRect(X(a), T, X(b == null ? t[n - 1] : b) - X(a), ph);
   g.strokeStyle = '#A3A9B3'; g.lineWidth = 1; g.setLineDash([3, 3]);
   for (const ts of item.events.switches) { g.beginPath(); g.moveTo(X(ts), T); g.lineTo(X(ts), T + ph); g.stroke(); }
   g.setLineDash([]);
-  g.strokeStyle = '#E3E6EA'; g.strokeRect(L, T, pw, ph);
   if (lo < 0 && hi > 0) { g.strokeStyle = '#D5D9DF'; g.beginPath(); g.moveTo(L, Y(0)); g.lineTo(L + pw, Y(0)); g.stroke(); }
   for (const s of item.series) {
     g.strokeStyle = s.color; g.lineWidth = s.width; g.setLineDash(s.dash || []);
     g.beginPath();
-    for (let i = 0; i < n; i++) { const x = X(t[i]), y = Y(s.v[i]); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+    for (let i = i0; i <= i1; i++) { const x = X(t[i]), y = Y(s.v[i]); i > i0 ? g.lineTo(x, y) : g.moveTo(x, y); }
     g.stroke();
   }
   g.setLineDash([]);
+  if (item.sel) {   // selection being dragged
+    const [xa, xb] = item.sel;
+    g.fillStyle = 'rgba(33,169,155,0.15)'; g.fillRect(Math.min(xa, xb), T, Math.abs(xb - xa), ph);
+    g.strokeStyle = '#21A99B'; g.strokeRect(Math.min(xa, xb), T, Math.abs(xb - xa), ph);
+  }
+  g.restore();
+  g.strokeStyle = '#E3E6EA'; g.strokeRect(L, T, pw, ph);
   g.fillStyle = '#6B7280'; g.font = '10px Segoe UI, sans-serif'; g.textAlign = 'right'; g.textBaseline = 'middle';
   g.fillText(fmtNum(hi - pad), L - 4, Y(hi - pad)); g.fillText(fmtNum(lo + pad), L - 4, Y(lo + pad));
-  if (lo < 0 && hi > 0) g.fillText('0', L - 4, Y(0));
-  g.textBaseline = 'top'; g.textAlign = 'left'; g.fillText('0', L, T + ph + 3);
-  g.textAlign = 'right'; g.fillText((t1 * 1000).toFixed(0) + ' ms', L + pw, T + ph + 3);
-  if (item.hover != null && item.hover >= L && item.hover <= L + pw) {
-    const i = Math.max(0, Math.min(n - 1, Math.round((item.hover - L) / pw * (n - 1))));
+  if (lo < 0 && hi > 0 && Math.abs(Y(0) - Y(hi - pad)) > 12 && Math.abs(Y(0) - Y(lo + pad)) > 12) g.fillText('0', L - 4, Y(0));
+  g.textBaseline = 'top';
+  const fmtT = (x) => (x * 1000).toFixed(t1 - t0 < 0.005 ? 2 : t1 - t0 < 0.05 ? 1 : 0);
+  g.textAlign = 'left'; g.fillText(fmtT(t0), L, T + ph + 3);
+  g.textAlign = 'right'; g.fillText(fmtT(t1) + ' ms', L + pw, T + ph + 3);
+  if (item.hover != null && item.hover >= L && item.hover <= L + pw && !item.sel) {
+    const tt = t0 + (item.hover - L) / pw * (t1 - t0);
+    let i = i0;
+    while (i < i1 && Math.abs(t[i + 1] - tt) <= Math.abs(t[i] - tt)) i++;
     const x = X(t[i]);
     g.strokeStyle = '#1F2537'; g.lineWidth = 1; g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke();
     const txt = (t[i] * 1000).toFixed(2) + ' ms   ' + (item.labels
@@ -1121,6 +1153,73 @@ function drawPlot(cv, item) {
     g.fillStyle = 'rgba(31,37,55,.88)'; g.fillRect(bx, T + 2, tw, 17);
     g.fillStyle = '#fff'; g.textAlign = 'left'; g.fillText(txt, bx + 5, T + 5);
   }
+}
+
+function redrawPlots() {
+  for (const { cv, item } of plotItems) drawPlot(cv, item);
+  updateZoomChip();
+}
+
+function setZoom(z) {
+  if (z) {
+    const all = plotItems.length ? plotItems[0].item.t : null;
+    const full0 = all ? all[0] : 0, full1 = all ? all[all.length - 1] : 1;
+    let [a, b] = z;
+    if (b - a < 2e-6) return;                              // too small to show
+    a = Math.max(full0, a); b = Math.min(full1, b);
+    z = (a <= full0 && b >= full1) ? null : [a, b];
+  }
+  plotZoom = z;
+  redrawPlots();
+}
+
+function updateZoomChip() {
+  const chip = $('zoomChip');
+  if (!chip) return;
+  chip.style.display = plotZoom ? '' : 'none';
+  if (plotZoom) chip.querySelector('b').textContent = (plotZoom[0] * 1000).toFixed(2) + ' – ' + (plotZoom[1] * 1000).toFixed(2) + ' ms';
+}
+
+// Mouse on a plot: hover read-out, drag to zoom to a time window, wheel to zoom, double-click to reset
+function attachPlot(card, cv, item) {
+  plotItems.push({ cv, item });
+  drawPlot(cv, item);
+  const timeAt = (x) => { const gm = item.geom; return gm.t0 + (Math.min(Math.max(x, gm.L), gm.L + gm.pw) - gm.L) / gm.pw * (gm.t1 - gm.t0); };
+  cv.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    item.sel = [e.offsetX, e.offsetX];
+    const move = (ev) => {
+      const r = cv.getBoundingClientRect();
+      item.sel[1] = ev.clientX - r.left;
+      drawPlot(cv, item);
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      const [xa, xb] = item.sel;
+      item.sel = null;
+      if (Math.abs(xb - xa) > 4) setZoom([timeAt(Math.min(xa, xb)), timeAt(Math.max(xa, xb))]);
+      else drawPlot(cv, item);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+  cv.addEventListener('mousemove', (e) => { item.hover = e.offsetX; if (!item.sel) drawPlot(cv, item); });
+  cv.addEventListener('mouseleave', () => { item.hover = null; if (!item.sel) drawPlot(cv, item); });
+  cv.addEventListener('dblclick', () => setZoom(null));
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const gm = item.geom, tc = timeAt(e.offsetX), f = e.deltaY < 0 ? 0.7 : 1 / 0.7;
+    setZoom([tc - (tc - gm.t0) * f, tc + (gm.t1 - tc) * f]);
+  }, { passive: false });
+  // enlarge / shrink this plot
+  const big = card.querySelector('.big');
+  if (big) big.onclick = () => {
+    card.classList.toggle('wide');
+    big.textContent = card.classList.contains('wide') ? '⤡' : '⤢';
+    drawPlot(cv, item);
+  };
 }
 
 // ------------------------------------------------------------------ tabs + splitter
