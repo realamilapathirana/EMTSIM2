@@ -7,39 +7,48 @@
 #include <stdexcept>
 #include <string>
 
-Network::Network(std::vector<std::unique_ptr<Element>> elements) : comp_list_(std::move(elements)) {
-    for (const auto& e : comp_list_) numNodes_ = std::max({numNodes_, e->strnode, e->stpnode});
+Network::Network(std::vector<std::unique_ptr<Element>> elements, int userNodes) : comp_list_(std::move(elements)) {
+    for (const auto& e : comp_list_)
+        for (int n : e->nodes) {
+            if (n < 0) throw std::invalid_argument("Negative node number in " + e->name);
+            numNodes_ = std::max(numNodes_, n);
+        }
+    userNodes_ = userNodes < 0 ? numNodes_ : std::min(userNodes, numNodes_);
 
-    // Known nodes are the nodes whose voltage is fixed by an ideal voltage source.
-    // Sources with a series resistance are modelled as Norton equivalents and
-    // do not create known nodes.
+    // Known nodes: voltages fixed by ideal sources and machine EMFs
     std::vector<int> known;
-    for (const auto& e : comp_list_) {
-        if (!e->isIdealSource()) continue;
-        if (e->strnode != 0 && e->stpnode != 0)
-            throw std::invalid_argument("An ideal voltage source must have one node connected to ground (node 0)");
-        const int node = (e->strnode == 0) ? e->stpnode : e->strnode;
-        if (std::find(known.begin(), known.end(), node) != known.end())
-            throw std::invalid_argument("Two ideal voltage sources on node " + std::to_string(node));
-        known.push_back(node);
-    }
+    for (const auto& e : comp_list_)
+        for (int p : e->knownTerminals()) {
+            const int node = e->nodes[p];
+            if (node == 0) throw std::invalid_argument(e->name + ": a known (ideal source) voltage cannot be on ground");
+            if (std::find(known.begin(), known.end(), node) != known.end())
+                throw std::invalid_argument("Two ideal voltage sources on node " + std::to_string(node));
+            known.push_back(node);
+        }
 
     // Internal node ordering: unknown nodes first, then known nodes, so that G can
-    // be partitioned into G_UU, G_UK, G_KU, G_KK regardless of how the user
-    // numbered the nodes.
+    // be partitioned into G_UU, G_UK, G_KU, G_KK regardless of how the nodes are numbered.
+    std::vector<char> isKnown(numNodes_ + 1, 0);
+    for (int n : known) isKnown[n] = 1;
     for (int n = 1; n <= numNodes_; ++n)
-        if (std::find(known.begin(), known.end(), n) == known.end()) order_.push_back(n);
+        if (!isKnown[n]) order_.push_back(n);
     order_.insert(order_.end(), known.begin(), known.end());
 
     idx_.assign(numNodes_ + 1, -1);
     for (int i = 0; i < numNodes_; ++i) idx_[order_[i]] = i;
-    for (auto& e : comp_list_) {
-        e->fi = idx_[e->strnode];
-        e->ti = idx_[e->stpnode];
-    }
-
     src_count_ = static_cast<int>(known.size());
     unknownNodes_ = numNodes_ - src_count_;
+
+    for (auto& e : comp_list_) {
+        e->idx.clear();
+        for (int n : e->nodes) e->idx.push_back(idx_[n]);
+        std::vector<int> ki;
+        for (int p : e->knownTerminals()) ki.push_back(idx_[e->nodes[p]] - unknownNodes_);
+        knownIdx_.push_back(ki);
+        hist_.emplace_back(e->size(), 0.0);
+        if (e->nonlinear()) nonlinear_.push_back(hist_.size() - 1);
+        for (const auto& nm : e->currentNames()) currentNames_.push_back(nm);
+    }
     Vn_.assign(numNodes_, 0.0);
     I_H_.assign(numNodes_, 0.0);
 
@@ -49,27 +58,20 @@ Network::Network(std::vector<std::unique_ptr<Element>> elements) : comp_list_(st
 
 bool Network::updateSwitches(double t) {
     bool changed = false;
-    for (auto& e : comp_list_)
-        if (auto* sw = dynamic_cast<Switch*>(e.get())) changed = sw->update(t) || changed;
+    for (auto& e : comp_list_) changed = e->timeEvent(t) || changed;
     return changed;
 }
 
 void Network::formG() {
     G_ = SparseMatrix(numNodes_, numNodes_);
     for (const auto& e : comp_list_) {
-        if (e->strnode == 0 && e->stpnode == 0) std::cout << "*** Both nodes of a element is zero ***\n";
-        if (e->strnode == e->stpnode) std::cout << "*** Both nodes of a element is same ***\n";
-
-        // Ideal sources have no conductance; their node voltage is imposed via V_K
-        if (e->isIdealSource()) continue;
-
-        const double g = 1.0 / e->Reff;
-        const int f = e->fi, t = e->ti;
-        if (f >= 0) G_.add(f, f, g);
-        if (t >= 0) G_.add(t, t, g);
-        if (f >= 0 && t >= 0) {
-            G_.add(f, t, -g);
-            G_.add(t, f, -g);
+        const std::size_t k = e->size();
+        Matrix g(k, k);
+        e->stamp(g);
+        for (std::size_t i = 0; i < k; ++i) {
+            if (e->idx[i] < 0) continue;
+            for (std::size_t j = 0; j < k; ++j)
+                if (e->idx[j] >= 0 && g(i, j) != 0.0) G_.add(e->idx[i], e->idx[j], g(i, j));
         }
     }
     G_.finalize();   // entries stamped at the same position are summed
@@ -95,30 +97,28 @@ void Network::Vdivide() {
 }
 
 void Network::Vkupdate(double t) {
-    for (auto& e : comp_list_) {
-        auto* src = dynamic_cast<Source*>(e.get());
-        if (!src) continue;
-        src->update(t);
-        if (src->ideal) {
-            // Source raises the potential from strnode to stpnode by E
-            if (src->strnode == 0) V_K_[src->ti - unknownNodes_] = src->E;
-            else                   V_K_[src->fi - unknownNodes_] = -src->E;
-        }
+    for (std::size_t n = 0; n < comp_list_.size(); ++n) {
+        if (knownIdx_[n].empty()) continue;
+        Vector e(knownIdx_[n].size(), 0.0);
+        comp_list_[n]->knownVoltages(t, e);
+        for (std::size_t j = 0; j < e.size(); ++j) V_K_[knownIdx_[n][j]] = e[j];
     }
 }
 
-void Network::calcBrnHistory() {
-    for (auto& e : comp_list_) e->calcHistory();
+void Network::calcBrnHistory(double t) {
+    for (std::size_t n = 0; n < comp_list_.size(); ++n) {
+        std::fill(hist_[n].begin(), hist_[n].end(), 0.0);
+        comp_list_[n]->history(t, hist_[n]);
+    }
 }
 
 void Network::calcinjection() {
     I_H_.assign(numNodes_, 0.0);
-    for (const auto& e : comp_list_) {
-        if (e->isIdealSource()) continue;
-        // Branch current i = V/Reff + ihistory flows from strnode to stpnode,
-        // so ihistory leaves strnode and enters stpnode. Ground (-1) is skipped.
-        if (e->fi >= 0) I_H_[e->fi] -= e->ihistory;
-        if (e->ti >= 0) I_H_[e->ti] += e->ihistory;
+    // Each element draws i = g v + h from its terminals, so h is subtracted at each terminal node
+    for (std::size_t n = 0; n < comp_list_.size(); ++n) {
+        const auto& e = comp_list_[n];
+        for (std::size_t j = 0; j < e->size(); ++j)
+            if (e->idx[j] >= 0) I_H_[e->idx[j]] -= hist_[n][j];
     }
 }
 
@@ -142,16 +142,40 @@ void Network::reconstruct_V() {
     std::copy(V_K_.begin(), V_K_.end(), Vn_.begin() + unknownNodes_);
 }
 
-void Network::calcNewbranchI() {
-    for (auto& e : comp_list_) {
-        // Branch voltage V = V(strnode) - V(stpnode), ground = 0
-        const double Vfrom = e->fi >= 0 ? Vn_[e->fi] : 0.0;
-        const double Vto = e->ti >= 0 ? Vn_[e->ti] : 0.0;
-        const double V = Vfrom - Vto;
-        e->Vlast = V;
-        if (e->isIdealSource()) continue;
-        // R: ihistory = 0, Norton source: ihistory = E/R, L/C: trapezoidal history
-        e->Ilast = V / e->Reff + e->ihistory;
+const Vector& Network::terminalVoltages(const Element& e) {
+    vbuf_.resize(e.size());
+    for (std::size_t j = 0; j < e.size(); ++j) vbuf_[j] = e.idx[j] >= 0 ? Vn_[e.idx[j]] : 0.0;
+    return vbuf_;
+}
+
+bool Network::checkNonlinear(double t) {
+    bool changed = false;
+    for (std::size_t n : nonlinear_) changed = comp_list_[n]->check(t, terminalVoltages(*comp_list_[n])) || changed;
+    return changed;
+}
+
+void Network::resolve(double t) {
+    formG(); Gdivide(); LU();
+    calcBrnHistory(t); calcinjection(); Idivide(); calIUnew(); calcnewV(); reconstruct_V();
+    ++resolves_;
+}
+
+void Network::calcNewbranchI(double t) {
+    // Current delivered by the known sources into each known node: I = G_KU v_U + G_KK v_K - I_K
+    Vector Iknown;
+    if (src_count_ > 0) {
+        const Vector a = G_KU_ * V_U_, b = G_KK_ * V_K_;
+        Iknown.resize(src_count_);
+        for (int k = 0; k < src_count_; ++k) Iknown[k] = a[k] + b[k] - I_K_[k];
+    }
+    for (std::size_t n = 0; n < comp_list_.size(); ++n) {
+        auto& e = comp_list_[n];
+        if (!knownIdx_[n].empty()) {
+            Vector ik(knownIdx_[n].size());
+            for (std::size_t j = 0; j < ik.size(); ++j) ik[j] = Iknown[knownIdx_[n][j]];
+            e->setKnownCurrents(ik);
+        }
+        e->update(t, terminalVoltages(*e));
     }
 }
 
@@ -159,20 +183,37 @@ double Network::nodeVoltage(int node) const { return node == 0 ? 0.0 : Vn_[idx_.
 
 void Network::recordv(double t) {
     time_.push_back(t);
-    Vector row(numNodes_);
-    for (int n = 1; n <= numNodes_; ++n) row[n - 1] = nodeVoltage(n);
+    Vector row(userNodes_);
+    for (int n = 1; n <= userNodes_; ++n) row[n - 1] = nodeVoltage(n);
     trace_.push_back(std::move(row));
+    Vector cur;
+    cur.reserve(currentNames_.size());
+    for (const auto& e : comp_list_) e->currents(cur);
+    currentTrace_.push_back(std::move(cur));
 }
 
 void Network::writeResults(const std::string& path) const {
     std::ofstream f(path);
     if (!f) throw std::runtime_error("Cannot write " + path);
     f << "time";
-    for (int n = 1; n <= numNodes_; ++n) f << ",V" << n;
+    for (int n = 1; n <= userNodes_; ++n) f << ",V" << n;
     f << "\n" << std::setprecision(17);   // full double precision, so results compare exactly
     for (std::size_t s = 0; s < time_.size(); ++s) {
         f << time_[s];
         for (double v : trace_[s]) f << "," << v;
+        f << "\n";
+    }
+}
+
+void Network::writeCurrents(const std::string& path) const {
+    std::ofstream f(path);
+    if (!f) throw std::runtime_error("Cannot write " + path);
+    f << "time";
+    for (const auto& nm : currentNames_) f << "," << nm;
+    f << "\n" << std::setprecision(17);
+    for (std::size_t s = 0; s < time_.size(); ++s) {
+        f << time_[s];
+        for (double v : currentTrace_[s]) f << "," << v;
         f << "\n";
     }
 }

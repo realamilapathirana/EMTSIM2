@@ -8,13 +8,16 @@
 #include "network.h"
 
 // Form the conductance matrix, divide it into GUU, GUK, GKU, GKK and
-// LU-decompose GUU. Only needed at the start and when a switch/fault changes
-// state, because G is constant otherwise.
+// LU-decompose GUU. Only needed at the start and when a switch/fault or a
+// non-linear element changes state, because G is constant otherwise.
 static void refactor(Network& EMTDC) {
     EMTDC.formG();
     EMTDC.Gdivide();
     EMTDC.LU();
 }
+
+// Re-solve a step at most this many times while non-linear elements change state
+constexpr int MAX_ITERATIONS = 50;
 
 // Usage:  emtsim                         -> circuit in circuit.cpp
 //         emtsim circuits/grid100.net    -> circuit from a netlist file
@@ -26,10 +29,12 @@ int main(int argc, char** argv) {
         const auto wallStart = std::chrono::steady_clock::now();
 
         // Initialize the network with the circuit from a netlist file or circuit.cpp
-        Network EMTDC(argc > 1 ? loadNetlist(argv[1]).elements : buildCircuit().elements);
+        Circuit ckt = argc > 1 ? loadNetlist(argv[1]) : buildCircuit();
+        Network EMTDC(std::move(ckt.elements), ckt.userNodes);
         // Set the initial switch/fault states and factorise G
         EMTDC.updateSwitches(Time);
         refactor(EMTDC);
+        int unconverged = 0;
 
         // Enter the main time loop
         while (Time < config::stpTime) {
@@ -42,7 +47,7 @@ int main(int argc, char** argv) {
             // Update the voltage sources
             EMTDC.Vkupdate(Time);
             // Calculate the history current of each branch
-            EMTDC.calcBrnHistory();
+            EMTDC.calcBrnHistory(Time);
             // Calculate the current injection at each node
             EMTDC.calcinjection();
             // Divide IH in to IU and IK
@@ -53,8 +58,14 @@ int main(int argc, char** argv) {
             EMTDC.calcnewV();
             // Reconstruct node voltage vector
             EMTDC.reconstruct_V();
+            // Non-linear elements (diodes, arresters, saturation): re-solve until their states agree
+            int it = 0;
+            while (EMTDC.checkNonlinear(Time)) {
+                if (++it > MAX_ITERATIONS) { ++unconverged; break; }
+                EMTDC.resolve(Time);
+            }
             // Calculate branch currents of each element
-            EMTDC.calcNewbranchI();
+            EMTDC.calcNewbranchI(Time);
             // Record the voltages of all nodes
             EMTDC.recordv(Time);
         }
@@ -64,12 +75,21 @@ int main(int argc, char** argv) {
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wallStart).count();
 
         EMTDC.writeResults("results.csv");
+        EMTDC.writeCurrents("currents.csv");
         EMTDC.writeEvents("events.csv");
-        std::cout << "\nDone: " << EMTDC.time().size() << " steps, " << EMTDC.numNodes() << " nodes.\n"
+        std::cout << "\nDone: " << EMTDC.time().size() << " steps, " << EMTDC.numNodes() << " nodes";
+        if (EMTDC.totalNodes() > EMTDC.numNodes())
+            std::cout << " (+" << EMTDC.totalNodes() - EMTDC.numNodes() << " internal)";
+        std::cout << ".\n"
                   << "Sparse LDL: G_UU has " << EMTDC.nnzG_UU() << " non-zeros, L has " << EMTDC.nnzFactor()
-                  << " below the diagonal, " << EMTDC.factorisations() << " factorisations\n"
-                  << "Simulation time: " << simMs << " ms\n"
-                  << "Results written to results.csv and events.csv. Plot them with:  python plot.py\n";
+                  << " below the diagonal, " << EMTDC.factorisations() << " factorisations";
+        if (EMTDC.resolves()) std::cout << " (" << EMTDC.resolves() << " re-solves for non-linear elements)";
+        std::cout << "\n";
+        if (unconverged)
+            std::cout << "Warning: non-linear elements did not settle within " << MAX_ITERATIONS << " iterations in "
+                      << unconverged << " steps\n";
+        std::cout << "Simulation time: " << simMs << " ms\n"
+                  << "Results written to results.csv, currents.csv and events.csv. Plot them with:  python plot.py\n";
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "Error: " << ex.what() << "\n";

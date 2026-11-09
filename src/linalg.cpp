@@ -36,6 +36,51 @@ void Matrix::print(std::ostream& os, const std::string& name) const {
     }
 }
 
+Matrix operator*(const Matrix& A, const Matrix& B) {
+    if (A.cols() != B.rows()) throw std::invalid_argument("Matrix * Matrix: size mismatch");
+    Matrix C(A.rows(), B.cols());
+    for (std::size_t i = 0; i < A.rows(); ++i)
+        for (std::size_t k = 0; k < A.cols(); ++k)
+            for (std::size_t j = 0; j < B.cols(); ++j) C(i, j) += A(i, k) * B(k, j);
+    return C;
+}
+
+Matrix operator+(const Matrix& A, const Matrix& B) {
+    if (A.rows() != B.rows() || A.cols() != B.cols()) throw std::invalid_argument("Matrix + Matrix: size mismatch");
+    Matrix C(A.rows(), A.cols());
+    for (std::size_t i = 0; i < A.rows(); ++i)
+        for (std::size_t j = 0; j < A.cols(); ++j) C(i, j) = A(i, j) + B(i, j);
+    return C;
+}
+
+Matrix operator*(double s, const Matrix& A) {
+    Matrix C(A.rows(), A.cols());
+    for (std::size_t i = 0; i < A.rows(); ++i)
+        for (std::size_t j = 0; j < A.cols(); ++j) C(i, j) = s * A(i, j);
+    return C;
+}
+
+Matrix transpose(const Matrix& A) {
+    Matrix T(A.cols(), A.rows());
+    for (std::size_t i = 0; i < A.rows(); ++i)
+        for (std::size_t j = 0; j < A.cols(); ++j) T(j, i) = A(i, j);
+    return T;
+}
+
+Matrix inverse(const Matrix& A) {
+    LUFactor lu;
+    lu.factor(A);
+    const std::size_t n = A.rows();
+    Matrix X(n, n);
+    for (std::size_t j = 0; j < n; ++j) {
+        Vector e(n, 0.0);
+        e[j] = 1.0;
+        const Vector x = lu.solve(e);
+        for (std::size_t i = 0; i < n; ++i) X(i, j) = x[i];
+    }
+    return X;
+}
+
 void LUFactor::factor(const Matrix& A) {
     if (A.rows() != A.cols()) throw std::invalid_argument("LU: matrix must be square");
     const std::size_t n = A.rows();

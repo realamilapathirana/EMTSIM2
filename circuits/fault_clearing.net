@@ -1,0 +1,31 @@
+# Fault clearing and reclosing on a 132 kV line feeding a 33 kV substation
+#
+#   GRID (132 kV, sequence impedance) -- BRK (3 poles, open at current zero) -- LINE (50 km, pi)
+#        -- T1 (132/33 kV, YNd1, saturating core) -- 33 kV load (30 MW, 10 Mvar)
+#   Surge arrester at the line end; single-line-to-ground fault on phase a at the line end.
+#
+# Events
+#   40 ms   fault phase a to ground at the line end
+#   80 ms   breaker trip command: each pole opens at its own current zero
+#   120 ms  fault arc extinguishes
+#   165 ms  breaker recloses at a phase-a voltage zero: the line and transformer are re-energised (inrush)
+#
+# Elements used: V3 behind sequence impedance, SW with czero, PI3, XF3 with saturation, MOV, F.
+.tran 50e-6 0.25
+
+V3  1 2 3  107778 0 50  1.0 0.05 2.0 0.12        # GRID   132 kV, 3-phase short-circuit level ~1.1 GVA
+SW  1 4  closed 0.08 0.165 czero                  # BRK.a
+SW  2 5  closed 0.08 0.165 czero                  # BRK.b
+SW  3 6  closed 0.08 0.165 czero                  # BRK.c
+PI3 4 5 6 7 8 9  2.5 0.065 0.45e-6  7.5 0.2 0.3e-6   # LINE   50 km: R1 L1 C1 R0 L0 C0 (totals)
+XF3 7 8 9 10 11 12  YNd1 60e6 132e3 33e3 50 0.12 0.005 im=0.5 knee=1.15 lsat=0.3   # T1
+MOV 7 0  172000                                   # ARR.a  1.6 pu
+MOV 8 0  172000                                   # ARR.b
+MOV 9 0  172000                                   # ARR.c
+R   10 0 36.3                                     # LOAD_R.a  10 MW per phase
+R   11 0 36.3                                     # LOAD_R.b
+R   12 0 36.3                                     # LOAD_R.c
+L   10 0 0.347                                    # LOAD_L.a  3.3 Mvar per phase
+L   11 0 0.347                                    # LOAD_L.b
+L   12 0 0.347                                    # LOAD_L.c
+F   7 0  0.04 0.12                                # FAULT  phase a to ground

@@ -1,0 +1,24 @@
+# Energising a 100 km, 230 kV line: travelling waves and switching overvoltage
+#
+#   GRID -- BRK1 -- LINE1 (Bergeron, open end)                    no protection
+#        -- BRK2 -- LINE2 (Bergeron, open end) + surge arresters  with protection
+#
+# Both breakers close at 20 ms, at the voltage peak of phase a (worst case). The wave
+# travels to the open end in 0.34 ms (aerial modes), doubles there, and keeps bouncing.
+# Compare the receiving-end voltages: nodes 7-9 (no arresters) and 13-15 (arresters).
+#
+# Elements used: V3 behind sequence impedance, SW, TL3 (Bergeron, with losses), MOV.
+.tran 5e-6 0.04
+
+V3  1 2 3  187794 0 50  0.5 0.04 1.0 0.08         # GRID   230 kV (peak phase voltage 187.8 kV)
+SW  1 4  open 0.02                                # BRK1.a
+SW  2 5  open 0.02                                # BRK1.b
+SW  3 6  open 0.02                                # BRK1.c
+TL3 4 5 6 7 8 9  300 0.345e-3 600 0.45e-3 3 20    # LINE1  Z1 tau1 Z0 tau0 R1 R0
+SW  1 10 open 0.02                                # BRK2.a
+SW  2 11 open 0.02                                # BRK2.b
+SW  3 12 open 0.02                                # BRK2.c
+TL3 10 11 12 13 14 15  300 0.345e-3 600 0.45e-3 3 20   # LINE2
+MOV 13 0 300000                                   # ARR.a  1.6 pu
+MOV 14 0 300000                                   # ARR.b
+MOV 15 0 300000                                   # ARR.c

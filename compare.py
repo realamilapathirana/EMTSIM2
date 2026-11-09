@@ -41,7 +41,7 @@ def run_python(netlist, repeat):
             main.run(netlist)
             best = min(best, time.perf_counter() - t0)
     net = nets[-1]
-    return np.array(net.time), np.array(net.trace), best
+    return np.array(net.time), np.array(net.trace), best, net.current_names, np.array(net.ctrace)
 
 
 def find_cpp_exe():
@@ -64,7 +64,10 @@ def run_cpp(netlist, repeat):
             raise SystemExit("C++ simulator did not report its time: rebuild it (build.bat).")
         best = min(best, ms[0]/1000.0)
     data = np.loadtxt(os.path.join(HERE, "results.csv"), delimiter=",", skiprows=1, ndmin=2)
-    return data[:, 0], data[:, 1:], best, exe
+    with open(os.path.join(HERE, "currents.csv")) as f:
+        cnames = f.readline().strip().split(",")[1:]
+    cur = np.loadtxt(os.path.join(HERE, "currents.csv"), delimiter=",", skiprows=1, ndmin=2)[:, 1:]
+    return data[:, 0], data[:, 1:], best, exe, cnames, cur
 
 
 def main():
@@ -76,8 +79,8 @@ def main():
     args = ap.parse_args()
 
     circuit = args.netlist or "built-in (dataloader.py / src/circuit.cpp)"
-    t_py, V_py, s_py = run_python(args.netlist, args.repeat)
-    t_cpp, V_cpp, s_cpp, exe = run_cpp(args.netlist, args.repeat)
+    t_py, V_py, s_py, cn_py, I_py = run_python(args.netlist, args.repeat)
+    t_cpp, V_cpp, s_cpp, exe, cn_cpp, I_cpp = run_cpp(args.netlist, args.repeat)
     steps, n = V_py.shape
 
     print("Circuit: %s" % circuit)
@@ -97,13 +100,32 @@ def main():
     print("  RMS difference    : %.3e V" % np.sqrt(np.mean((V_py - V_cpp)**2)))
     print("  relative to peak  : %.1e   (peak |V| = %.1f V)" % (worst / peak.max(), peak.max()))
     print("  identical values  : %.2f %%" % (100.0*np.mean(V_py == V_cpp)))
+    worst_rel_I = 0.0
+    if cn_py == cn_cpp and I_py.shape == I_cpp.shape and I_py.size:
+        # branch currents (and machine speed, angle, power, torque): currents are compared with the largest
+        # current in the circuit (a current that is almost zero, e.g. at an open line end, is all round-off);
+        # machine quantities ([pu], [deg]) with their own peak
+        dI = np.abs(I_py - I_cpp).max(axis=0)
+        pk = np.abs(I_py).max(axis=0)
+        is_current = np.array(["[" not in nm for nm in cn_py])
+        ref = np.where(is_current, pk[is_current].max() if is_current.any() else 1.0, np.maximum(pk, 1e-30))
+        rel = dI/ref
+        k = int(np.argmax(rel))
+        worst_rel_I = rel[k]
+        print("  branch currents   : %d signals, max |difference| %.1e of the largest current (worst: %s)"
+              % (len(cn_py), worst_rel_I, cn_py[k]))
+    elif cn_py != cn_cpp:
+        print("  branch currents   : the two versions record different signals (%d vs %d)" % (len(cn_py), len(cn_cpp)))
     order = np.argsort(-diff.max(axis=0))
     rows = range(n) if n <= 12 else order[:5]
     print("\n  %s" % ("Node   peak |V| (V)   max |Python - C++| (V)" if n <= 12 else
                       "Nodes with the largest difference:\n  Node   peak |V| (V)   max |Python - C++| (V)"))
     for k in rows:
         print("  V%-4d  %12.2f   %22.3e" % (k + 1, peak[k], diff[:, k].max()))
-    agree = worst <= 1e-9 * peak.max()
+    # Round-off is amplified by the conditioning of the network matrix: switches and diodes (on 1e-3 ohm,
+    # off 1e6 ohm) make it ~1e9, so 1e-6 of the peak is still round-off; a real difference (e.g. a diode
+    # switching one step earlier) would be of the order of the signal itself.
+    agree = worst <= 1e-6 * peak.max() and worst_rel_I <= 1e-6
     print("\n%s" % ("The two versions agree to within floating-point round-off." if agree
                      else "The two versions DIFFER by more than floating-point round-off."))
 

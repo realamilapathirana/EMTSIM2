@@ -1,0 +1,17 @@
+# Transformer inrush: energising an unloaded 11/0.4 kV transformer at voltage zero
+#
+# The core flux starts from zero, so energising at a voltage zero drives the flux to almost
+# twice its rated peak; beyond the knee (1.15 pu) the core saturates and the magnetising
+# current rises to many times its normal value, decaying over many cycles.
+# T_SAT has a saturating core (two-slope curve), T_LIN the same transformer with a linear core.
+#
+# Elements used: V behind R + L, SW, XF (single-phase transformer, with and without saturation).
+.tran 50e-6 0.2
+
+V   0 1  8981.6 0 50  0.5 0.01                    # GRID   11 kV / sqrt(3) phase voltage, peak
+SW  1 2  open 0.005                               # BRK_SAT  closes at a voltage zero
+XF  2 0 3 0  1e6 6351 231 50 0.06 0.01 im=1 knee=1.15 lsat=0.15   # T_SAT
+R   3 0  1e4                                      # OPEN_SAT  (no load)
+SW  1 4  open 0.005                               # BRK_LIN
+XF  4 0 5 0  1e6 6351 231 50 0.06 0.01 im=1       # T_LIN
+R   5 0  1e4                                      # OPEN_LIN

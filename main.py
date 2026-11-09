@@ -8,10 +8,14 @@ import dataloader as dl
 def refactor(EMTDC):
     # Form the conductance matrix, divide it into GUU, GUK, GKU, GKK
     # and LU-decompose GUU. Only needed at the start and when a switch/fault
-    # changes state, because G is constant otherwise.
+    # or a non-linear element changes state, because G is constant otherwise.
     EMTDC.formG()
     EMTDC.Gdivide()
     EMTDC.LU()
+
+
+# Re-solve a step at most this many times while non-linear elements change state
+MAX_ITERATIONS = 50
 
 
 def run(netlist_path=None):
@@ -26,6 +30,7 @@ def run(netlist_path=None):
     #Set the initial switch/fault states and factorise G
     EMTDC.updateSwitches(Time)
     refactor(EMTDC)
+    EMTDC.unconverged = 0
 
     #Enter the main time loop
     while Time<config.stpTime:
@@ -39,7 +44,7 @@ def run(netlist_path=None):
         #Update the voltage sources
         EMTDC.Vkupdate(Time)
         #Calculate the history current of each branch
-        EMTDC.calcBrnHistory()
+        EMTDC.calcBrnHistory(Time)
         #Calculate the current injection at each node
         EMTDC.calcinjection()
         #Divide IH in to IU and IK
@@ -50,11 +55,22 @@ def run(netlist_path=None):
         EMTDC.calcnewV()
         #Reconstruct node voltage vector
         EMTDC.reconstruct_V()
+        #Non-linear elements (diodes, arresters, saturation): re-solve until their states agree
+        it = 0
+        while EMTDC.checkNonlinear(Time):
+            it += 1
+            if it > MAX_ITERATIONS:
+                EMTDC.unconverged += 1
+                break
+            EMTDC.resolve(Time)
         #Calculate branch currents of each element
-        EMTDC.calcNewbranchI()
+        EMTDC.calcNewbranchI(Time)
         #Record the voltages of all nodes
         EMTDC.recordv(Time)
 
+    if EMTDC.unconverged:
+        print("Warning: non-linear elements did not settle within %d iterations in %d steps"
+              % (MAX_ITERATIONS, EMTDC.unconverged))
     EMTDC.plotv()
 
 

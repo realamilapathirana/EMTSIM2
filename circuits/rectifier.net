@@ -1,0 +1,34 @@
+# Six-pulse thyristor rectifier (firing angle 30 deg) and diode rectifier on a 400 V supply
+#
+#   SUPPLY (400 V, with source inductance -> commutation overlap)
+#     -- thyristor bridge T1..T6 -- DC: smoothing L + 5 ohm load        (nodes 4 = DC+, 5 = DC-)
+#     -- diode bridge D1..D6     -- DC: 2000 uF capacitor + 10 ohm load (nodes 6 = DC+, 7 = DC-)
+#
+# Gate timing: valve k fires alpha degrees after its natural commutation point. With phase a
+# voltage = Vm cos(wt), the natural points are -60 (T1, a+), 0 (T2, c-), 60 (T3, b+), 120 (T4, a-),
+# 180 (T5, c+) and 240 deg (T6, b-), so each valve gets ref = -(natural point).
+# Ideal DC voltage of the thyristor bridge: 1.35 x 400 x cos 30 = 468 V, minus the commutation
+# drop (3/pi) w Ls Id.
+#
+# Elements used: V3 behind impedance, THY, D, R, L, C.
+.tran 20e-6 0.12
+
+V3  1 2 3  326.6 0 50  0.005 0.1e-3              # SUPPLY  400 V line-to-line, Ls = 0.1 mH
+THY 1 4  30 50 ref=60                            # T1  a -> DC+
+THY 5 3  30 50 ref=0                             # T2  DC- -> c
+THY 2 4  30 50 ref=-60                           # T3  b -> DC+
+THY 5 1  30 50 ref=-120                          # T4  DC- -> a
+THY 3 4  30 50 ref=-180                          # T5  c -> DC+
+THY 5 2  30 50 ref=120                           # T6  DC- -> b
+L   4 8  5e-3                                    # LDC   smoothing reactor
+R   8 5  5                                       # RLOAD
+D   1 6                                          # D1
+D   7 3                                          # D2
+D   2 6                                          # D3
+D   7 1                                          # D4
+D   3 6                                          # D5
+D   7 2                                          # D6
+C   6 7  2000e-6                                 # CDC
+R   6 7  10                                      # RDC
+R   5 0  1e6                                     # REF_T  (ground reference for the DC side)
+R   7 0  1e6                                     # REF_D

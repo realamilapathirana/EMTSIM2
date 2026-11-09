@@ -1,0 +1,23 @@
+# Generator and motor: induction motor start and a fault near a synchronous generator
+#
+#   GEN (synchronous, 20 MVA, 11 kV) -- bus 1 -- LINE (coupled R-L) -- bus 4 -- GRID (11 kV, impedance)
+#                                                                      bus 4 -- MOTOR (induction, 2 MVA)
+#
+# Events
+#   0 s     the induction motor starts direct on line from standstill (load torque ~ speed^2)
+#   1.0 s   three-phase fault at bus 1 (next to the generator)
+#   1.15 s  fault cleared: the generator rotor swings and settles
+# Recorded: GEN.speed[pu], GEN.delta[deg], GEN.Pe[pu], MOTOR.speed[pu], MOTOR.torque[pu].
+# The generator starts at its equilibrium rotor angle for 0.8 pu: delta0 = asin(Pm X / E) = 37 deg,
+# with X = xd'' + line + grid = 0.2 + 0.52 + 0.10 pu on 20 MVA.
+#
+# Elements used: SM, IM, RL3, V3 behind impedance, F.
+.tran 100e-6 2.0
+
+SM  1 2 3  20e6 11e3 50  3.0 0.2 0.003  1.1 37.0 0.8  d=2   # GEN    H xd2 ra E delta0 Pm
+RL3 1 2 3 4 5 6  0.05 0.01 0.15 0.03             # LINE
+V3  4 5 6  8981.6 0 50  0.02 0.002 0.05 0.005    # GRID   11 kV
+IM  4 5 6  2e6 11e3 50 4  0.01 0.1 0.04 0.1 3.0  0.3 0.6    # MOTOR  rs xls rr xlr xm  H Tload
+F   1 0  1.0 1.15                                # FAULT_A
+F   2 0  1.0 1.15                                # FAULT_B
+F   3 0  1.0 1.15                                # FAULT_C
