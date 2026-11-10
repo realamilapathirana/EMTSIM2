@@ -120,7 +120,8 @@
   #summary .chip b { font-weight: 600; }
   .legend { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
   .legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--teal); }
-  .legend i.py { border-top: 2px dashed var(--orange); }
+  .legend i.py { border-top: 2px dashed #1F2537; }
+  .legend i.ov { border-top: 2px dashed #8A8F98; }
   #plots { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 8px; }
   .card { border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px 2px; background: #fff; }
   .card .ttl { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; }
@@ -162,6 +163,11 @@
     <option value="cpp">C++</option>
     <option value="python">Python</option>
     <option value="both">Both (compare)</option>
+  </select>
+  <select id="overlay" title="Also run the circuit a second time and draw it as a grey dashed line">
+    <option value="none">No overlay</option>
+    <option value="plain">Overlay: plain method (chatter removal &amp; interpolation off)</option>
+    <option value="cda">Overlay: with chatter removal &amp; interpolation</option>
   </select>
   <button class="primary" id="btnRun" title="Run the simulation (F5)">▶ Run</button>
 </header>
@@ -947,7 +953,15 @@ async function run() {
   updateStatus('Running the ' + { cpp: 'C++', python: 'Python', both: 'C++ and Python' }[engine] + ' simulator…');
   try {
     const meta = raw == null ? { phases: net.phases, drawNodes: net.nodeCount } : { phases: 1, drawNodes: 0 };
-    results = Object.assign(await api('/api/run', { text: currentText(), engine }), meta);
+    const res = Object.assign(await api('/api/run', { text: currentText(), engine }), meta);
+    const ov = $('overlay').value;
+    if (ov !== 'none') {    // the same circuit with the options forced off (plain) or on, drawn as a grey dashed line
+      const eng = engine === 'python' ? 'python' : 'cpp';
+      const r = await api('/api/run', { text: withOptions(currentText(), ov === 'cda'), engine: eng });
+      const run = r[eng];
+      res.overlay = run.error ? { error: run.error } : Object.assign({ label: ov === 'cda' ? 'with chatter removal & interpolation' : 'plain method (both off)' }, run);
+    }
+    results = res;
     plotZoom = null;
     const errs = ['cpp', 'python'].filter((k) => results[k] && results[k].error).map((k) => (k === 'cpp' ? 'C++' : 'Python') + ': ' + results[k].error);
     $('logText').textContent = ['cpp', 'python'].filter((k) => results[k]).map((k) =>
@@ -962,6 +976,12 @@ async function run() {
   }
 }
 $('btnRun').onclick = run;
+
+// The netlist with chatter removal and switching interpolation both on or both off
+function withOptions(text, on) {
+  const lines = text.split('\n').filter((l) => !/^\s*\.options\b/i.test(l));
+  return '.options chatter=' + (on ? 'on' : 'off') + ' interp=' + (on ? 'on' : 'off') + '\n' + lines.join('\n');
+}
 
 function parseFilter(s, n) {
   s = (s || '').trim().toLowerCase();
@@ -1012,13 +1032,15 @@ function renderResults() {
     if (c.speedup) chips.push('<span class="chip">C++ <b>' + c.speedup.toFixed(0) + '×</b> faster</span>');
     chips.push('<span class="chip">max |Python − C++| <b>' + (c.max_diff === 0 ? '0 V (identical)' : c.max_diff.toExponential(2) + ' V') + '</b></span>');
   }
+  const ov = overlayFor(main, 'V', 'V');
   if (three) {
     chips.push(PHASE_COLORS.map((c, p) => '<span class="legend"><i style="border-top-color:' + c + '"></i>' + S.PH[p] + '</span>').join('') +
-               (cpp && py ? '<span class="legend">C++ solid, Python dashed</span>' : ''));
+               (cpp && py ? '<span class="legend">C++ solid, <i class="py"></i>Python</span>' : ''));
   } else {
     chips.push(cpp && py ? '<span class="legend"><i></i>C++</span><span class="legend"><i class="py"></i>Python</span>'
-                         : '<span class="legend"><i' + (cpp ? '' : ' class="py"') + '></i>' + (cpp ? 'C++' : 'Python') + '</span>');
+                         : '<span class="legend"><i' + (cpp ? '' : ' style="border-top-color:var(--orange)"') + '></i>' + (cpp ? 'C++' : 'Python') + '</span>');
   }
+  if (ov) chips.push(ov.chips);
   sum.innerHTML = chips.join('') + ZOOM_CHIP;
 
   let idx = parseFilter($('nodeFilter').value, groups);
@@ -1040,9 +1062,10 @@ function renderResults() {
     const series = [];
     cols.forEach((j, p) => {
       const color = three ? PHASE_COLORS[p] : null;
-      if (cpp) series.push({ v: cpp.V[j], color: color || '#21A99B', width: 1.3 });
-      if (py) series.push({ v: py.V[j], color: color || '#E8833A', width: 1.1, dash: cpp ? [4, 3] : null });
+      if (cpp) series.push({ v: cpp.V[j], color: color || '#21A99B', width: cpp && py ? 2 : 1.3 });
+      if (py) series.push(cpp ? { v: py.V[j], color: '#1F2537', width: 1, dash: [3, 3] } : { v: py.V[j], color: color || '#E8833A', width: 1.3 });
     });
+    if (ov) cols.forEach((j) => series.push({ v: ov.run.V[j], color: '#8A8F98', width: 1.2, dash: [6, 4] }));
     const item = { t: main.t, series, events: main.events, hover: null,
                    labels: three ? S.PH.map((p, j) => ({ name: p, s: series[j * (cpp && py ? 2 : 1)] })) : null };
     attachPlot(card, cv, item);
@@ -1056,11 +1079,26 @@ $('resultKind').addEventListener('change', () => {
   renderResults();
 });
 
+// The overlay run (same circuit, options forced on or off), if it exists and matches: its series key
+// (V or I) and the chips describing it
+function overlayFor(main, key, unit) {
+  const o = results.overlay;
+  if (!o) return null;
+  if (o.error) return { run: null, chips: '<span class="chip" style="background:#FDECEC">overlay failed: ' + o.error + '</span>' };
+  if (!o[key] || o[key].length !== main[key].length || o.t.length !== main.t.length) return null;
+  let d = 0;
+  for (let j = 0; j < main[key].length; j++)
+    for (let i = 0; i < main.t.length; i++) d = Math.max(d, Math.abs(main[key][j][i] - o[key][j][i]));
+  return { run: o, chips: '<span class="legend"><i class="ov"></i>' + o.label + '</span>' +
+                          '<span class="chip">max difference <b>' + (d === 0 ? '0' : d.toPrecision(3)) + ' ' + unit + '</b></span>' };
+}
+
 // Branch currents (and machine speed, angle, power, torque): one card per element; the three
 // phases of a three-phase element (names ending .a, .b, .c) share a card
 function renderCurrents(cpp, py, main, sum, box) {
   const names = main.cnames || [];
   if (!names.length) { sum.innerHTML = ''; box.innerHTML = '<div class="empty">No branch currents were recorded (rebuild the C++ simulator).</div>'; return; }
+  const ovI = overlayFor(main, 'I', '');
   const groups = [];
   for (let k = 0; k < names.length; k++) {
     const m = names[k].match(/^(.*)\.a$/);
@@ -1074,7 +1112,7 @@ function renderCurrents(cpp, py, main, sum, box) {
   sum.innerHTML = '<span class="chip"><b>' + groups.length + '</b> elements · <b>' + names.length + '</b> signals</span>' +
     '<span class="legend">currents flow from the first terminal into the element; [pu] and [deg] are machine quantities</span>' +
     (capped ? '<span class="chip" style="background:#FFF6E6">showing the first ' + MAX + ': type part of a name in Show</span>' : '') +
-    ZOOM_CHIP;
+    (ovI ? ovI.chips : '') + ZOOM_CHIP;
   box.innerHTML = '';
   for (const g of shown) {
     const card = document.createElement('div');
@@ -1088,9 +1126,10 @@ function renderCurrents(cpp, py, main, sum, box) {
     const series = [];
     g.cols.forEach((j, p) => {
       const color = g.cols.length === 3 ? PHASE_COLORS[p] : null;
-      if (cpp && cpp.I) series.push({ v: cpp.I[j], color: color || '#21A99B', width: 1.3 });
-      if (py && py.I) series.push({ v: py.I[j], color: color || '#E8833A', width: 1.1, dash: cpp ? [4, 3] : null });
+      if (cpp && cpp.I) series.push({ v: cpp.I[j], color: color || '#21A99B', width: cpp && py ? 2 : 1.3 });
+      if (py && py.I) series.push(cpp ? { v: py.I[j], color: '#1F2537', width: 1, dash: [3, 3] } : { v: py.I[j], color: color || '#E8833A', width: 1.3 });
     });
+    if (ovI) g.cols.forEach((j) => series.push({ v: ovI.run.I[j], color: '#8A8F98', width: 1.2, dash: [6, 4] }));
     const item = { t: main.t, series, events: main.events, hover: null, unit: u,
                    labels: g.cols.length === 3 ? S.PH.map((p, j) => ({ name: p, s: series[j * (cpp && py ? 2 : 1)] })) : null };
     attachPlot(card, cv, item);
