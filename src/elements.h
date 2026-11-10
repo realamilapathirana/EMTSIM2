@@ -23,6 +23,19 @@
 // Ideal voltage sources (and machines' internal EMFs) fix the voltage of some
 // terminals: knownTerminals() / knownVoltages(); the network then tells them the
 // current they deliver with setKnownCurrents().
+//
+// Chatter removal and switching interpolation (config::chatter / config::interp) need three
+// more things from every element:
+//   history() / check() / update() with config::euler set: a backward-Euler half step of Dt/2
+//                 (same conductances as the trapezoidal rule, no voltage term in the history
+//                 currents); config::step is the length of the step being taken
+//   saveState(out) / loadState(s, pos)
+//                 its continuous state (currents, voltages, fluxes, ...) as numbers, so the
+//                 network can interpolate the whole solution between two time points
+// and, from elements that switch (switches, faults, diodes, thyristors):
+//   beginStep(a, b)    remember the state at the start of a step a -> b
+//   eventAlpha(a, dt)  after the step: where in it (0..1) the element should have switched (< 0: not)
+//   applyEvent(t)      switch at time t                       -> true: g changed
 
 #include <complex>
 #include <optional>
@@ -56,6 +69,17 @@ public:
 
     virtual std::vector<std::string> currentNames() const { return {name}; }
     virtual void currents(Vector& out) const = 0;                       // append, same order as names
+
+    // chatter removal / switching interpolation
+    virtual void saveState(Vector& out) const { (void)out; }            // append the continuous state
+    virtual std::size_t loadState(const Vector& s, std::size_t pos) { (void)s; return pos; }
+    virtual bool hasEvents() const { return false; }   // switches, faults, diodes, thyristors
+    virtual bool valve() const { return false; }       // diodes and thyristors: switched by events, not check()
+    virtual bool valveOn() const { return false; }     // a valve that is conducting
+    virtual bool scheduledIn(double a, double b) const { (void)a; (void)b; return false; }
+    virtual void beginStep(double a, double b) { (void)a; (void)b; }
+    virtual double eventAlpha(double a, double dt) const { (void)a; (void)dt; return -1.0; }
+    virtual bool applyEvent(double t) { (void)t; return false; }
 };
 
 // ---------------------------------------------------------------- two-terminal branches
@@ -69,6 +93,8 @@ public:
     void history(double t, Vector& h) override;
     void update(double t, const Vector& v) override;
     void currents(Vector& out) const override { out.push_back(Ilast); }
+    void saveState(Vector& out) const override { out.push_back(Ilast); out.push_back(Vlast); }
+    std::size_t loadState(const Vector& s, std::size_t pos) override { Ilast = s[pos]; Vlast = s[pos + 1]; return pos + 2; }
 
     int strnode() const { return nodes[0]; }
     int stpnode() const { return nodes[1]; }
@@ -121,6 +147,12 @@ public:
     bool timeEvent(double t) override;
     void update(double t, const Vector& v) override;
 
+    bool hasEvents() const override { return true; }
+    bool scheduledIn(double a, double b) const override;
+    void beginStep(double a, double b) override;
+    double eventAlpha(double a, double dt) const override;
+    bool applyEvent(double t) override;
+
     std::vector<double> t_switch;
     double Ron, Roff;
     bool closed0, closed;
@@ -133,6 +165,7 @@ protected:
     virtual const char* label() const { return "switch"; }
     virtual const char* describe(bool isClosed) const { return isClosed ? "closed" : "opened"; }
     bool pending_open_ = false, zero_seen_ = false;
+    double t_cmd_ = 0.0, ia_ = 0.0;
 };
 
 // Fault: closed from t_apply until t_clear (no t_clear = permanent)
@@ -154,7 +187,7 @@ struct RLBlock {
     RLBlock() = default;
     RLBlock(const Matrix& R, const Matrix& L);
     std::size_t n = 0;
-    Matrix A, B;                      // A = (R + 2L/dt)^-1,  B = 2L/dt - R
+    Matrix A, B, L2;                  // A = (R + 2L/dt)^-1,  B = 2L/dt - R,  L2 = 2L/dt
     Vector vprev, iprev, ih;
     void stamp(Matrix& g, const std::vector<int>& from, const std::vector<int>& to) const;
     void history(Vector& h, const std::vector<int>& from, const std::vector<int>& to);
@@ -174,6 +207,8 @@ public:
     void update(double t, const Vector& v) override { (void)t; rl_.update(rl_.branchVoltage(v, from_, to_)); }
     std::vector<std::string> currentNames() const override;
     void currents(Vector& out) const override { for (double i : rl_.iprev) out.push_back(i); }
+    void saveState(Vector& out) const override;
+    std::size_t loadState(const Vector& s, std::size_t pos) override;
 
 private:
     std::vector<int> from_, to_;      // positions in nodes[]
@@ -191,6 +226,8 @@ public:
     void update(double t, const Vector& v) override;
     std::vector<std::string> currentNames() const override;
     void currents(Vector& out) const override { for (double i : iprev_) out.push_back(i); }
+    void saveState(Vector& out) const override;
+    std::size_t loadState(const Vector& s, std::size_t pos) override;
 
 private:
     Matrix G_;                        // 2C/dt
@@ -214,13 +251,18 @@ public:
     void update(double t, const Vector& v) override;
     std::vector<std::string> currentNames() const override;
     void currents(Vector& out) const override;
+    // state: number of samples, time and values of the newest sample, phase currents. Loading a
+    // state between two saved ones (a fractional count) replaces the newest sample.
+    void saveState(Vector& out) const override;
+    std::size_t loadState(const Vector& s, std::size_t pos) override;
 
 private:
     std::size_t M_;
     Matrix T_;                        // phase -> mode (orthonormal)
     std::vector<double> Z_, tau_, hk_;  // Z' = Zc + R/4,  h = (Zc - R/4) / (Zc + R/4)
     Matrix Yp_;                       // phase-domain conductance at each end: T^T diag(1/Z') T
-    // modal histories (one sample per step, sample 0 = start time)
+    // modal histories, one sample per solution point at times ts_ (sample 0 = start time)
+    std::vector<double> ts_;
     std::vector<std::vector<double>> vk_, ik_, vm_, im_;
     Vector Ihk_, Ihm_;                // modal history currents for this step
     Vector ikPhase_, imPhase_;        // phase currents into the line at each end (last step)
@@ -240,10 +282,12 @@ public:
     void update(double t, const Vector& v) override;
     std::vector<std::string> currentNames() const override { return {name + ".1", name + ".2"}; }
     void currents(Vector& out) const override { out.push_back(i_); out.push_back(n_ * i_); }
+    void saveState(Vector& out) const override { out.push_back(vprev_); out.push_back(i_); }
+    std::size_t loadState(const Vector& s, std::size_t pos) override { vprev_ = s[pos]; i_ = s[pos + 1]; return pos + 2; }
 
 private:
     double a_[4];
-    double n_, A_, B_;
+    double n_, A_, B_, L2_;           // A = 1/(R + 2L/dt),  B = 2L/dt - R,  L2 = 2L/dt
     double vprev_ = 0.0, i_ = 0.0, ih_ = 0.0;
 };
 
@@ -262,9 +306,14 @@ public:
     void update(double t, const Vector& v) override;
     void currents(Vector& out) const override { out.push_back(i_); }
     double flux() const { return lambda_; }
+    void saveState(Vector& out) const override { out.push_back(lambda_); out.push_back(vprev_); out.push_back(i_); }
+    std::size_t loadState(const Vector& s, std::size_t pos) override {
+        lambda_ = s[pos]; vprev_ = s[pos + 1]; i_ = s[pos + 2]; return pos + 3;
+    }
 
 private:
     std::vector<double> ip_, lp_;     // break points including (0, 0)
+    double flux0() const;             // flux before this step's own voltage
     int seg_ = 0, sign_ = 1;
     double lambda_ = 0.0, vprev_ = 0.0, i_ = 0.0, ih_ = 0.0;
     void segmentOf(double lambda, int& seg, int& sign) const;
@@ -282,6 +331,8 @@ public:
     bool nonlinear() const override { return true; }
     void update(double t, const Vector& v) override;
     void currents(Vector& out) const override { out.push_back(i_); }
+    void saveState(Vector& out) const override { out.push_back(i_); }
+    std::size_t loadState(const Vector& s, std::size_t pos) override { i_ = s[pos]; return pos + 1; }
 
 private:
     std::vector<double> vp_, ip_;     // break points including (0, 0)
@@ -305,12 +356,20 @@ public:
     void update(double t, const Vector& v) override;
     void currents(Vector& out) const override { out.push_back(i_); }
     bool on() const { return on_; }
+    bool valveOn() const override { return on_; }
+    void saveState(Vector& out) const override { out.push_back(i_); out.push_back(v_); }
+    std::size_t loadState(const Vector& s, std::size_t pos) override { i_ = s[pos]; v_ = s[pos + 1]; return pos + 2; }
+    bool hasEvents() const override { return true; }
+    bool valve() const override { return true; }
+    void beginStep(double a, double b) override { (void)a; (void)b; ia_ = i_; va_ = v_; }
+    double eventAlpha(double a, double dt) const override;
+    bool applyEvent(double t) override { (void)t; on_ = !on_; return true; }
 
 protected:
     virtual bool gate(double t) const { (void)t; return true; }
     double Ron_, Roff_, Vf_;
     bool on_ = false;
-    double i_ = 0.0;
+    double i_ = 0.0, v_ = 0.0, ia_ = 0.0, va_ = 0.0;
 };
 
 // Thyristor: a diode that can only turn on while its gate is fired. Simple control:
@@ -342,6 +401,8 @@ public:
     void knownVoltages(double t, Vector& e) const override;
     std::vector<std::string> currentNames() const override;
     void currents(Vector& out) const override;
+    void saveState(Vector& out) const override;
+    std::size_t loadState(const Vector& s, std::size_t pos) override;
 
     double speed() const { return w_; }
     double delta() const { return delta_; }
@@ -369,6 +430,8 @@ public:
     void knownVoltages(double t, Vector& e) const override;
     std::vector<std::string> currentNames() const override;
     void currents(Vector& out) const override;
+    void saveState(Vector& out) const override;
+    std::size_t loadState(const Vector& s, std::size_t pos) override;
 
     double speed() const { return wm_ / wms_; }
 

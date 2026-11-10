@@ -619,7 +619,11 @@ function renderProps() {
     const st = model.settings || {};
     h += '<h3 style="margin-top:6px">Run settings</h3>' +
          field('set_dt', 'Time step (blank = 100 µs)', st.dt || '', 's', 'value') +
-         field('set_tstop', 'Duration (blank = 0.1 s)', st.tstop || '', 's', 'value');
+         field('set_tstop', 'Duration (blank = 0.1 s)', st.tstop || '', 's', 'value') +
+         '<div class="field"><label><input type="checkbox" data-opt="interp"' + (st.interp === 'off' ? '' : ' checked') +
+         '> Switch at the exact instant (interpolation)</label></div>' +
+         '<div class="field"><label><input type="checkbox" data-opt="chatter"' + (st.chatter === 'off' ? '' : ' checked') +
+         '> Chatter removal (critical damping adjustment)</label></div>';
     if (net) h += msgList(net);
     h += '<h3 style="margin-top:14px">How to draw</h3><ul class="help">' +
          '<li>Pick a component on the left and click to place it. Press <b>R</b> to rotate.</li>' +
@@ -634,7 +638,16 @@ function renderProps() {
          '<li>A red ring marks a terminal that is not connected.</li>' +
          '<li><b>Save</b> writes circuits/&lt;name&gt;.net, which also runs with .\\run.bat circuits\\&lt;name&gt;.net</li></ul>';
     p.innerHTML = h;
-    // run settings (stored in the drawing, written as a .tran line)
+    // run settings (stored in the drawing, written as .tran and .options lines)
+    p.querySelectorAll('input[data-opt]').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        pushUndo();
+        const st = Object.assign({}, model.settings);
+        if (inp.checked) delete st[inp.dataset.opt]; else st[inp.dataset.opt] = 'off';
+        model.settings = st;
+        render();
+      });
+    });
     p.querySelectorAll('input[data-param^="set_"]').forEach((inp) => {
       const k = inp.dataset.param.slice(4);
       const show = () => {

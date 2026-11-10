@@ -373,6 +373,104 @@ void newElementTests() {
     }
 }
 
+// ---------------------------------------------------------------- chatter removal and switching interpolation
+
+// Run a netlist with the main program's time loop (Network::runWithEvents when chatter removal
+// or interpolation is on, the plain loop otherwise)
+std::unique_ptr<Network> runMain(const std::string& text) {
+    std::ostringstream sink;
+    auto* old = std::cout.rdbuf(sink.rdbuf());
+    auto net = std::make_unique<Network>(parseNetlist(text, "test").elements);
+    net->updateSwitches(config::srtTime);
+    net->formG(); net->Gdivide(); net->LU();
+    if (config::chatter || config::interp) {
+        net->runWithEvents(50);
+    } else {
+        double t = config::srtTime;
+        const int steps = static_cast<int>(std::lround((config::stpTime - config::srtTime) / config::Dt));
+        for (int s = 0; s < steps; ++s) {
+            net->Vdivide();
+            t += config::Dt;
+            if (net->updateSwitches(t)) { net->formG(); net->Gdivide(); net->LU(); }
+            net->Vkupdate(t); net->calcBrnHistory(t); net->calcinjection(); net->Idivide();
+            net->calIUnew(); net->calcnewV(); net->reconstruct_V();
+            for (int it = 0; it < 50 && net->checkNonlinear(t); ++it) net->resolve(t);
+            net->calcNewbranchI(t);
+            net->recordv(t);
+        }
+    }
+    std::cout.rdbuf(old);
+    return net;
+}
+
+void chatterTests() {
+    const std::string plain = ".options chatter=off interp=off\n";
+
+    // Watson & Arrillaga, Fig 9.3: opening a switch on an inductor. The trapezoidal rule leaves a
+    // sustained step-by-step oscillation of the inductor voltage; chatter removal takes it out.
+    const std::string rlOpen = ".tran 0.0001 0.005\nV 0 1 10 0 0\nSW 1 2 closed 0.003\nR 2 3 1\nL 3 0 0.001\n";
+    {
+        const auto p = runMain(plain + rlOpen), c = runMain(rlOpen);
+        const auto vp = nodeTrace(*p, 3), vc = nodeTrace(*c, 3);
+        check(p->time().size() == 50 && c->time().size() == 50, "chatter: same output time grid with and without", 0.0);
+        check(peakAbs(vp, 35) > 150.0, "chatter: plain trapezoidal rule chatters after opening (V)", peakAbs(vp, 35));
+        check(peakAbs(vc, 31) < 1e-3 * peakAbs(vp, 35), "chatter: removed after opening the switch (V)", peakAbs(vc, 31));
+    }
+    // Fig 9.4: diode-fed RL load, chatter when the diode turns off
+    const std::string dRL = ".tran 0.00005 0.03\nV 0 1 100 0 50\nD 1 2 # D\nR 2 3 1\nL 3 0 0.1\n";
+    {
+        const auto p = runMain(plain + dRL), c = runMain(dRL);
+        const auto ip = currentTrace(*p, "D"), vp = nodeTrace(*p, 3), vc = nodeTrace(*c, 3);
+        std::size_t k = 1;
+        while (k < ip.size() && !(ip[k - 1] > 1e-6 && ip[k] <= 1e-6)) ++k;   // first turn-off
+        check(k < ip.size() && peakAbs(vp, k + 2, k + 40) > 10.0, "chatter: diode-fed RL chatters at turn-off (plain, V)",
+              peakAbs(vp, k + 2, k + 40));
+        check(peakAbs(vc, k + 3, k + 40) < 1e-3 * peakAbs(vp, k + 2, k + 40), "chatter: none after the diode turns off (V)",
+              peakAbs(vc, k + 3, k + 40));
+    }
+    // Fig 9.5: forced commutation. The switch opens between time points; the free-wheeling diode
+    // takes over the inductor current at the same instant, so there is no voltage spike.
+    {
+        const auto c = runMain(".tran 0.00005 0.03\nV 0 1 10 0 0\nSW 1 2 closed 0.020025\nD 0 2\nR 2 3 1\nL 3 0 0.1 # L\n");
+        const auto v2 = nodeTrace(*c, 2), iL = currentTrace(*c, "L");
+        check(peakAbs(v2, 401) < 0.05, "interpolation: no spike when the free-wheeling diode takes over (V)", peakAbs(v2, 401));
+        const double i0 = iL[399], i1 = iL[401];
+        check(std::fabs(i1 - i0) < 0.01 * i0, "interpolation: inductor current continues through the diode", std::fabs(i1 - i0));
+    }
+    // A switch closing between time points (t = 1.02 ms, dt = 0.1 ms) on an RL circuit: with
+    // interpolation the current follows i = 10 (1 - exp(-(t - ts)/tau)) closely; without, the switch
+    // acts at the next time point (0.08 ms late).
+    {
+        const std::string rl = ".tran 0.0001 0.005\nV 0 1 10 0 0\nSW 1 2 open 0.00102\nR 2 3 1\nL 3 0 0.001 # L\n";
+        auto err = [&](const Network& n) {
+            const auto i = currentTrace(n, "L");
+            double e = 0;
+            for (std::size_t k = 0; k < i.size(); ++k) {
+                const double t = n.time()[k], ex = t > 0.00102 ? 10.0 * (1.0 - std::exp(-(t - 0.00102) / 1e-3)) : 0.0;
+                e = std::max(e, std::fabs(i[k] - ex));
+            }
+            return e;
+        };
+        const auto p = runMain(plain + rl), c = runMain(rl);
+        check(err(*c) < 0.4 * err(*p), "interpolation: switching between time points (error A, interp vs plain)", err(*c));
+        check(err(*c) < 0.1, "interpolation: error as small as with the switch on a time point (A)", err(*c));
+    }
+    // A breaker opening at current zero: the current is interrupted at its zero crossing
+    {
+        const auto c = runMain(".tran 0.00005 0.06\nV 0 1 100 0 50\nSW 1 2 closed 0.0201 czero # BRK\nR 2 3 1\nL 3 0 0.01\n");
+        const auto i = currentTrace(*c, "BRK");
+        const std::size_t k = static_cast<std::size_t>(std::lround(0.0201 / 0.00005));
+        double before = 0.0;
+        for (std::size_t q = k - 40; q < k; ++q) before = std::max(before, std::fabs(i[q]));
+        check(before > 5.0 && peakAbs(i, k + 300) < 1e-3, "interpolation: breaker opens at a current zero (A after)",
+              peakAbs(i, k + 300));
+        check(peakAbs(nodeTrace(*c, 3), k + 300) < 0.01, "chatter: none after the breaker opens (V)",
+              peakAbs(nodeTrace(*c, 3), k + 300));
+    }
+    config::chatter = config::defaultChatter;
+    config::interp = config::defaultInterp;
+}
+
 }  // namespace
 
 int main() {
@@ -512,6 +610,12 @@ int main() {
         newElementTests();
     } catch (const std::exception& e) {
         std::printf("FAIL  element tests stopped with an error: %s\n", e.what());
+        ++failures;
+    }
+    try {
+        chatterTests();
+    } catch (const std::exception& e) {
+        std::printf("FAIL  chatter tests stopped with an error: %s\n", e.what());
         ++failures;
     }
 

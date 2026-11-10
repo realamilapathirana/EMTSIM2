@@ -40,10 +40,22 @@ public:
     void calIUnew();         // I_U_new = I_U - G_UK * V_K
     void calcnewV();         // solve G_UU V_U = I_U_new
     void reconstruct_V();    // Vn = [V_U ; V_K]
-    bool checkNonlinear(double t);   // state changes of non-linear elements; true -> re-solve the step
+    enum Valves { NoValves, TurnOnOnly, AllValves };     // which diodes/thyristors check() may switch
+    bool checkNonlinear(double t, Valves valves = AllValves);   // state changes of non-linear elements; true -> re-solve
     void resolve(double t);  // refactorise and solve the step again (after checkNonlinear)
     void calcNewbranchI(double t);   // commit: element currents and states for the next step
     void recordv(double t);  // record node voltages and branch currents
+
+    // chatter removal / switching interpolation
+    Vector save() const;                 // continuous state: node voltages and every element's state
+    void load(const Vector& s);
+    void solveStep(double t, Valves valves, int maxIterations);   // one step with the present switch states
+    double detect(double a, double dt, bool interp, std::vector<Element*>& hits) const;   // < 0: none
+    const std::vector<Element*>& events() const { return events_; }
+    bool hasValves() const { return hasValves_; }
+    int unconverged = 0;                 // steps where non-linear elements did not settle
+    // the time loop with switching interpolation and chatter removal (config::chatter / config::interp)
+    void runWithEvents(int maxIterations);
 
     void writeResults(const std::string& path) const;   // time, V1..Vn as CSV
     void writeCurrents(const std::string& path) const;  // time, branch currents as CSV
@@ -77,6 +89,8 @@ private:
     std::vector<Vector> hist_;                  // history currents of each element
     std::vector<std::vector<int>> knownIdx_;    // per element: indices into V_K of its known terminals
     std::vector<std::size_t> nonlinear_;        // elements whose state can change with the solution
+    std::vector<Element*> events_;              // switches, faults, diodes, thyristors
+    bool hasValves_ = false;
     Vector vbuf_;                               // terminal voltages of one element
 
     std::vector<double> time_;

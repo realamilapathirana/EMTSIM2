@@ -195,6 +195,14 @@ check(S.parseFile('R 1 0 5\n').raw !== undefined, 'a netlist without a drawing l
                  'MOV 4 0  600 1000 26', 'D 4 5  ron=0.001 roff=1000000', 'THY 5 6  30 50 ref=60 width=120 ron=0.001 roff=1000000', 'R 6 0  10']),
         'new single-phase components write the expected netlist lines', JSON.stringify(a.L));
   check(/^\.tran 0\.00005 0\.04$/m.test(a.r.text), 'run settings are written as a .tran line');
+  check(!/^\.options/m.test(a.r.text), 'no .options line while chatter removal and interpolation are on (the default)');
+  {
+    const m2 = Object.assign({}, m1, { settings: { dt: '50u', tstop: '40m', chatter: 'off', interp: 'off' } });
+    const t2 = S.buildNetlist(m2).text;
+    check(/^\.options chatter=off interp=off$/m.test(t2), 'switched-off options are written as a .options line');
+    const back = S.parseFile('#@layout ' + JSON.stringify(S.serialize(m2))).model;
+    check(back.settings.chatter === 'off' && back.settings.interp === 'off', 'the options survive save and load');
+  }
   // three-phase: source with sequence impedance, pi line, coupled RL, Bergeron line, transformer, arresters, machines
   const m3 = { phases: 3, components: [
     comp('V3', 'GRID', 0, 4, 270, { mag: '8981.6', angle: '0', freq: '50', r: '0.02', l1: '2m', r0: '', l0: '5m' }), gnd(0, 4),

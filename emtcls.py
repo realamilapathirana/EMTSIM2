@@ -64,6 +64,9 @@ class Network:
             self.current_names += obj.current_names()
         self.hist = [np.zeros(obj.size()) for obj in self.comp_list]
         self.nonlinear = [obj for obj in self.comp_list if obj.nonlinear]   # state can change with the solution
+        self.events = [obj for obj in self.comp_list if obj.has_events]     # switches, faults, diodes, thyristors
+        self.has_valves = any(obj.valve for obj in self.comp_list)
+        self.unconverged = 0
 
         self.G = np.zeros((self.totalNodes, self.totalNodes))
         self.Vn = np.zeros((self.totalNodes, 1))
@@ -149,10 +152,14 @@ class Network:
     def _terminal_voltages(self, obj):
         return [self.Vn[ix, 0] if ix >= 0 else 0.0 for ix in obj.idx]
 
-    def checkNonlinear(self, TheTime):
-        '''State changes of non-linear elements; True -> re-solve the step.'''
+    def checkNonlinear(self, TheTime, valves=True):
+        '''State changes of non-linear elements; True -> re-solve the step.
+        valves: True: diodes and thyristors too; False: they are left alone (they switch by events);
+        "on": only turn-on (a free-wheeling diode taking over right after a switching).'''
         changed = False
         for obj in self.nonlinear:
+            if obj.valve and (valves is False or (valves == "on" and obj.on)):
+                continue
             changed = obj.check(TheTime, self._terminal_voltages(obj)) or changed
         return changed
 
@@ -171,6 +178,50 @@ class Network:
             if ki:
                 obj.set_known_currents([Iknown[k] for k in ki])
             obj.update(TheTime, self._terminal_voltages(obj))
+
+    # ---------------------------------------------------------------- chatter removal / interpolation
+    def save(self):
+        '''The continuous state of the whole network (node voltages and every element's state).'''
+        out = self.Vn[:, 0].tolist()
+        for obj in self.comp_list:
+            obj.save_state(out)
+        return np.array(out)
+
+    def load(self, S):
+        n = self.totalNodes
+        self.Vn = np.array(S[:n], dtype=float).reshape(-1, 1)
+        pos = n
+        for obj in self.comp_list:
+            pos = obj.load_state(S, pos)
+
+    def solve_step(self, TheTime, valves=False, max_iterations=50):
+        '''One trapezoidal step to TheTime with the present switch states (no scheduled switching).'''
+        self.Vdivide(); self.Vkupdate(TheTime); self.calcBrnHistory(TheTime); self.calcinjection()
+        self.Idivide(); self.calIUnew(); self.calcnewV(); self.reconstruct_V()
+        it = 0
+        while self.checkNonlinear(TheTime, valves):
+            it += 1
+            if it > max_iterations:
+                self.unconverged += 1
+                break
+            self.resolve(TheTime)
+        self.calcNewbranchI(TheTime)
+
+    def detect(self, a, dt, interp):
+        '''Earliest switching in the step a -> a+dt: (fraction 0..1, elements switching there) or (None, []).
+        Without interpolation every switching happens at the end of the step.'''
+        best, hits = None, []
+        for obj in self.events:
+            al = obj.event_alpha(a, dt)
+            if al is None:
+                continue
+            if not interp:
+                al = 1.0
+            if best is None or al < best - 1e-9:
+                best, hits = al, [obj]
+            elif al <= best + 1e-9:
+                hits.append(obj)
+        return best, hits
 
     def node_voltage(self, node):
         return 0.0 if node == 0 else self.Vn[self.idx[node], 0]

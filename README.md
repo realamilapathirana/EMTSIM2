@@ -191,7 +191,7 @@ It opens in your browser at `http://127.0.0.1:8765`. Press **Ctrl+C** in the ter
 - **Problems:** short-circuited parts, unconnected terminals (red ring), a missing ground and ideal sources without a grounded terminal are listed in the right panel and the **Netlist** tab.
 - **Run (F5):** runs the C++ or Python simulator, or **Both (compare)**, and plots every node voltage, with faults shaded and switch operations dashed. Hover over a plot to read values. In compare mode the summary shows both run times, the speed-up and the largest Python − C++ difference.
 - **Currents:** choose *Currents* above the plots to see the branch current of every element, and the machines' speed, rotor angle, power and torque. Type part of a name in *Show* to filter.
-- **Run settings:** with nothing selected, the right panel has the time step and duration of the run (written into the file as a `.tran` line).
+- **Run settings:** with nothing selected, the right panel has the time step and duration of the run (written into the file as a `.tran` line), and two switches that are on by default: switching at the exact instant (interpolation) and chatter removal (see [Switching](#4-switching-interpolation-and-chatter-removal)).
 - **More components:** lines (π and Bergeron), transformers, surge arresters, and diodes and thyristors (single-phase mode) or the coupled R-L branch and the generator and motor (three-phase mode). Breakers can open at a current zero, and sources can have an internal inductance (sequence impedance for three-phase sources).
 - **Save (Ctrl+S):** writes `circuits/<name>.net`, an ordinary netlist that also runs with `.\run.bat circuits\<name>.net`. The drawing is stored in a `#@layout` comment line, so **Open…** can bring it back. Netlists without a drawing (for example hand-written ones) can be opened and run but not edited.
 
@@ -230,6 +230,7 @@ Node `0` is ground, and other nodes are numbered `1, 2, 3, ...`.
 
 ```
 .tran 50e-6 0.2                # time step and duration (s); before the elements; default 100 us, 0.1 s
+.options chatter=off interp=off   # switch off chatter removal / switching interpolation (both on by default)
 R  1 2  0.2                    # R12      from to ohm
 L  2 3  3e-3                   # L23      from to henry
 C  3 0  30e-6                  # C1       from to farad
@@ -380,6 +381,17 @@ for each time step:
 write results.csv, events.csv (C++) / plot (Python)
 ```
 
+### 4. Switching: interpolation and chatter removal
+
+A fixed time step has two well-known problems with switching, described in Watson & Arrillaga's *Power Systems Electromagnetic Transients Simulation*, section 9.4. A switch time, a breaker's current zero or a diode's turn-off almost never falls on a time point, so the switching happens up to one step late and chops a non-zero current. And even when it does fall on a time point, the trapezoidal rule leaves a sustained step-by-step oscillation of the inductor voltages (or capacitor currents) around the true solution: numerical *chatter*. Chapter 8 of the [Tiny book](docs/book/TinyBookOfEMT.pdf) shows it.
+
+Both solvers handle this in the same way (`run_with_events()` in [`main.py`](main.py), `Network::runWithEvents` in [`src/network.cpp`](src/network.cpp)), on by default and switched off with a `.options chatter=off interp=off` line:
+
+- **Interpolation** (`interp`): after each step, the earliest switching inside it is located: a switch time, the zero crossing of a breaker's current (or its chopping level), the voltage zero where a diode or thyristor turns on (with its gate fired) or the current zero where it turns off. The whole solution (node voltages and every element's state) is linearly interpolated back to that instant, the element switches there and $G$ is refactorised. A free-wheeling diode that has to take over an inductor current turns on at the same instant, so there is no voltage spike.
+- **Chatter removal** (`chatter`), by *critical damping adjustment*: after every switching, the next two steps are backward-Euler half steps of $\Delta t/2$. With that step length backward Euler has exactly the trapezoidal conductances ($\Delta t/2L$, $2C/\Delta t$), so $G$ is not touched; only the history currents change (an inductor's becomes $i(t-\Delta t/2)$, without the voltage term), which is enough to stop the oscillation from starting.
+
+The solution then runs on a time grid shifted by the switching instant, and the next step is interpolated back onto the regular grid, where the results are recorded; the output always has the same time points as a plain run. With both options off, the solver is the plain trapezoidal method of section 3.
+
 ## Project structure
 
 | C++ | Python | Purpose |
@@ -405,17 +417,17 @@ write results.csv, events.csv (C++) / plot (Python)
 
 ## Accuracy
 
-`ctest` runs [`tests/test_emtsim.cpp`](tests/test_emtsim.cpp). It compares the solver with the analytical solutions of RL and RC circuits energised by a sinusoidal source, covering every combination of ideal and Norton sources and element orientation, plus a switch closing into an RL circuit. At Δt = 100 µs the maximum error is about 5×10⁻⁵ per unit.
+`ctest` runs [`tests/test_emtsim.cpp`](tests/test_emtsim.cpp). It compares the solver with the analytical solutions of RL and RC circuits energised by a sinusoidal source, covering every combination of ideal and Norton sources and element orientation, plus a switch closing into an RL circuit. At Δt = 100 µs the maximum error is about 5×10⁻⁵ per unit. It also checks switching interpolation and chatter removal on the circuits of Watson & Arrillaga's chapter 9: the diode-fed RL load, forced commutation with a free-wheeling diode, a breaker opening at a current zero, and a switch closing between time points (as accurate as one closing on a time point).
 
 The C++ solver is a port of the Python version. On all three example networks the two agree to within 2×10⁻¹⁰ V, which is floating-point round-off. See [Compare the two](#compare-the-two). The tests also check the sparse LDLᵀ against the dense LU, and they agree to 1.5×10⁻¹⁴ relative.
 
 ## Limitations and ideas
 
 - No frequency-dependent line model (the Bergeron line has constant parameters and lumped losses)
-- Breakers open at a current zero detected at a time step, without interpolating the exact instant; there is no arc model
+- There is no arc model: a breaker is an ideal switch that opens at the current zero (or chopping level)
 - The machine models are reduced: the synchronous machine is the classical model (constant EMF behind xd'', no excitation or governor control), and the induction machine has no saturation and a star point connected to ground
 - Non-linear elements are piecewise linear and solved by re-solving the step (no compensation method); a step that does not settle within 50 iterations is reported
-- The trapezoidal rule can produce numerical oscillations after switching inductive circuits (for example diodes turning off). Critical damping adjustment (CDA) is a known fix; snubbers help.
+- Chatter removal acts on switching events. Chatter started by a step change in a source would need the slope-detection PSCAD adds; a smaller time step or a snubber helps there.
 - The minimum-degree ordering is a simple O(n²) implementation. It takes milliseconds at 1,000 nodes, but an approximate minimum degree (AMD) ordering would be needed for networks of tens of thousands of nodes.
 - Δt = 100 µs resolves only about 5 samples per cycle of the 1–2 kHz LC resonances in the 100-node network. Use a smaller time step for studies where those frequencies matter.
 - The built-in examples are defined in code twice (`src/circuit.cpp` and `dataloader.py`). Use a netlist file to define a circuit once for both versions.

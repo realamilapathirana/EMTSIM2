@@ -23,6 +23,7 @@ parameters can be given as key=value.
     SM  a b c  S V f H xd2 ra E delta0 Pm [D=]       synchronous machine (classical)
     IM  a b c  S V f poles rs xls rr xlr xm H Tload [speed0=]   induction machine
     .tran dt tstop                                   time step and stop time (before the elements)
+    .options chatter=on|off interp=on|off            chatter removal / switching interpolation (default on)
 """
 import math
 import re
@@ -241,8 +242,10 @@ def _build(kind, name, n, args, kw, flags, b):
 def parse(text, where="netlist"):
     statements, max_node = [], 0
     # time step and stop time: defaults unless the netlist has a ".tran dt tstop" line
-    config.Dt = config.defaultDt
+    config.Dt = config.step = config.defaultDt
+    config.euler = False
     config.stpTime = config.srtTime + config.defaultStop
+    config.chatter, config.interp = config.defaultChatter, config.defaultInterp
     for lineno, raw in enumerate(text.splitlines(), 1):
         loc = "%s:%d" % (where, lineno)
         body, _, comment = raw.partition("#")
@@ -257,8 +260,16 @@ def parse(text, where="netlist"):
                 raise ValueError("%s: .tran needs 0 < dt < tstop" % loc)
             if statements:
                 raise ValueError("%s: put .tran before the elements" % loc)
-            config.Dt = dt
+            config.Dt = config.step = dt
             config.stpTime = config.srtTime + stop
+            continue
+        if tok[0].upper() == ".OPTIONS":
+            for kv in tok[1:]:
+                key, _, val = kv.partition("=")
+                key, val = key.lower(), val.lower()
+                if key not in ("chatter", "interp") or val not in ("on", "off", "1", "0", "true", "false", "yes", "no"):
+                    raise ValueError("%s: use .options chatter=on|off interp=on|off" % loc)
+                setattr(config, key, val in ("on", "1", "true", "yes"))
             continue
         cw = comment.split()
         name = cw[0].rstrip(",;:") if cw else ""

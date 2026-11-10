@@ -279,8 +279,11 @@ Circuit parseNetlist(const std::string& text, const std::string& where) {
     std::string raw;
     int maxNode = 0;
     // time step and stop time: defaults unless the netlist has a ".tran dt tstop" line
-    config::Dt = config::defaultDt;
+    config::Dt = config::step = config::defaultDt;
+    config::euler = false;
     config::stpTime = config::srtTime + config::defaultStop;
+    config::chatter = config::defaultChatter;
+    config::interp = config::defaultInterp;
     for (int lineno = 1; std::getline(in, raw); ++lineno) {
         Statement s;
         s.where = where + ":" + std::to_string(lineno);
@@ -294,8 +297,22 @@ Circuit parseNetlist(const std::string& text, const std::string& where) {
             const double dt = toNumber(tok[1], "dt"), stop = toNumber(tok[2], "tstop");
             if (!(dt > 0.0) || !(stop > dt)) throw std::runtime_error(s.where + ": .tran needs 0 < dt < tstop");
             if (!stmts.empty()) throw std::runtime_error(s.where + ": put .tran before the elements");
-            config::Dt = dt;
+            config::Dt = config::step = dt;
             config::stpTime = config::srtTime + stop;
+            continue;
+        }
+        if (upper(tok[0]) == ".OPTIONS") {
+            for (std::size_t k = 1; k < tok.size(); ++k) {
+                const std::size_t eq = tok[k].find('=');
+                std::string key = tok[k].substr(0, eq), val = eq == std::string::npos ? "" : tok[k].substr(eq + 1);
+                for (auto* x : {&key, &val})
+                    std::transform(x->begin(), x->end(), x->begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                const bool on = val == "on" || val == "1" || val == "true" || val == "yes";
+                const bool off = val == "off" || val == "0" || val == "false" || val == "no";
+                if ((key != "chatter" && key != "interp") || !(on || off))
+                    throw std::runtime_error(s.where + ": use .options chatter=on|off interp=on|off");
+                (key == "chatter" ? config::chatter : config::interp) = on;
+            }
             continue;
         }
         if (hash != std::string::npos) {   // the first word of the comment names the element

@@ -19,6 +19,7 @@ static void refactor(Network& EMTDC) {
 // Re-solve a step at most this many times while non-linear elements change state
 constexpr int MAX_ITERATIONS = 50;
 
+
 // Usage:  emtsim                         -> circuit in circuit.cpp
 //         emtsim circuits/grid100.net    -> circuit from a netlist file
 int main(int argc, char** argv) {
@@ -38,7 +39,11 @@ int main(int argc, char** argv) {
 
         // Enter the main time loop
         // half a step of tolerance: Time is accumulated as Time += Dt and can land just below stpTime
-        while (Time < config::stpTime - 0.5 * config::Dt) {
+        if (config::chatter || config::interp) {
+            EMTDC.runWithEvents(MAX_ITERATIONS);   // switching interpolation and chatter removal
+            unconverged = EMTDC.unconverged;
+        }
+        while (!(config::chatter || config::interp) && Time < config::stpTime - 0.5 * config::Dt) {
             // Divide node voltage vector into VU and VK
             EMTDC.Vdivide();
             // Advance one time step

@@ -1,5 +1,8 @@
 # Tiny book of EMT simulation, chapter 4: closing a switch on a 10 V battery, 1 ohm, 1 mH.
 # The circuit is at rest before t = 0; the battery is connected at t = 0.
+# The book works through the plain trapezoidal rule (chapter 8 shows its chatter), so
+# chatter removal and switching interpolation are off here.
+.options chatter=off interp=off
 .tran 0.0001 0.005
 V 0 1  10 0 0      # BATTERY   (peak 10 V, angle 0, frequency 0 = DC)
 R 1 2  1           # R

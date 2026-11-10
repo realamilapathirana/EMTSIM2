@@ -544,6 +544,9 @@
       if (!(d > 0) || !(ts > d)) errors.push('Run settings: need 0 < time step < duration.');
       else header.push('.tran ' + fmt(d) + ' ' + fmt(ts), '');
     }
+    // switching interpolation and chatter removal are on unless switched off
+    const off = ['chatter', 'interp'].filter((k) => st[k] === 'off');
+    if (off.length) header.push('.options ' + off.map((k) => k + '=off').join(' '), '');
     const layout = '#@layout ' + JSON.stringify(serialize(model));
     const text = header.concat(lines, ['', layout]).join('\n') + '\n';
     return { text, lines, errors, warnings, phases, nodeCount: N, netlistNodes: phases * N, labels,
@@ -559,7 +562,7 @@
       wires: model.wires.map((w) => ({ x1: w.x1, y1: w.y1, x2: w.x2, y2: w.y2 })),
     };
     if (model.phases === 3) out.phases = 3;
-    if (model.settings && (model.settings.dt || model.settings.tstop)) out.settings = Object.assign({}, model.settings);
+    if (model.settings && Object.values(model.settings).some((v) => v)) out.settings = Object.assign({}, model.settings);
     return out;
   }
 

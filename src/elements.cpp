@@ -63,9 +63,9 @@ RLC::RLC(char type, int from, int to, double value) : TwoTerminal(std::string(1,
 
 void RLC::calcHistory(double t) {
     (void)t;
-    switch (kind_) {
-        case 'L': ihistory = Ilast + Vlast / Reff; break;
-        case 'C': ihistory = -Ilast - Vlast / Reff; break;
+    switch (kind_) {   // backward-Euler half step: no voltage term
+        case 'L': ihistory = config::euler ? Ilast : Ilast + Vlast / Reff; break;
+        case 'C': ihistory = config::euler ? -Vlast / Reff : -Ilast - Vlast / Reff; break;
         default: ihistory = 0.0; break;
     }
 }
@@ -166,6 +166,75 @@ void Switch::update(double t, const Vector& v) {
     if (pending_open_ && closed && (iprev * Ilast <= 0.0 || std::fabs(Ilast) <= chop)) zero_seen_ = true;
 }
 
+// ---- events (chatter removal / interpolation)
+bool Switch::scheduledIn(double a, double b) const {
+    const double tol = 1e-6 * config::Dt;
+    if (pending_open_) return true;
+    for (double ts : t_switch)
+        if (a + tol < ts && ts <= b + tol) return true;
+    return false;
+}
+
+void Switch::beginStep(double a, double b) {
+    ia_ = Ilast;
+    if (!opens_at_current_zero) return;
+    const bool want = stateAt(b);
+    if (closed && !want && !pending_open_) {      // open command: wait for a current zero
+        pending_open_ = true;
+        const double tol = 1e-6 * config::Dt;
+        t_cmd_ = a;
+        for (double ts : t_switch)
+            if (ts <= b + tol) t_cmd_ = std::max(t_cmd_, ts);
+        std::printf("t = %.5f s: %s open command (nodes %d-%d), waiting for current zero\n", t_cmd_, label(), nodes[0],
+                    nodes[1]);
+    } else if (want && pending_open_) {
+        pending_open_ = false;
+    }
+}
+
+double Switch::eventAlpha(double a, double dt) const {
+    const double tol = 1e-6 * dt;
+    double best = -1.0;
+    for (double ts : t_switch)                     // scheduled closing / opening
+        if (a + tol < ts && ts <= a + dt + tol) {
+            const bool want = stateAt(ts);
+            if (want != closed && (want || !opens_at_current_zero)) {
+                best = std::min(1.0, std::max(0.0, (ts - a) / dt));
+                break;
+            }
+        }
+    if (pending_open_ && closed) {                 // breaker: current zero (or chopping level)
+        const double ia = ia_, ib = Ilast;
+        double al = -1.0;
+        if (ia == 0.0) al = 0.0;
+        else if (ia * ib <= 0.0) al = ia / (ia - ib);
+        if (chop > 0.0 && std::fabs(ib) <= chop) {
+            const double ac = std::fabs(ia) <= chop ? 0.0 : (std::fabs(ia) - chop) / (std::fabs(ia) - std::fabs(ib));
+            al = al < 0.0 ? ac : std::min(al, ac);
+        }
+        if (al >= 0.0) {
+            al = std::min(1.0, std::max({al, (t_cmd_ - a) / dt, 0.0}));
+            best = best < 0.0 ? al : std::min(best, al);
+        }
+    }
+    return best;
+}
+
+bool Switch::applyEvent(double t) {
+    const bool want = stateAt(t);
+    if (want && !closed) {
+        setState(true, t);
+        pending_open_ = zero_seen_ = false;
+        return true;
+    }
+    if (!want && closed && (!opens_at_current_zero || pending_open_)) {
+        setState(false, t);
+        pending_open_ = zero_seen_ = false;
+        return true;
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------- Fault
 
 namespace {
@@ -190,7 +259,11 @@ Matrix sequenceMatrix(double X1, double X0) {
 
 RLBlock::RLBlock(const Matrix& R, const Matrix& L)
     : n(R.rows()), A(inverse(R + (2.0 / config::Dt) * L)), B((2.0 / config::Dt) * L + (-1.0) * R),
-      vprev(R.rows(), 0.0), iprev(R.rows(), 0.0), ih(R.rows(), 0.0) {}
+      vprev(R.rows(), 0.0), iprev(R.rows(), 0.0), ih(R.rows(), 0.0) {
+    L2 = L;
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) L2(i, j) = 2.0 * L(i, j) / config::Dt;
+}
 
 void RLBlock::stamp(Matrix& g, const std::vector<int>& from, const std::vector<int>& to) const {
     for (std::size_t i = 0; i < n; ++i)
@@ -204,8 +277,12 @@ void RLBlock::stamp(Matrix& g, const std::vector<int>& from, const std::vector<i
 
 void RLBlock::history(Vector& h, const std::vector<int>& from, const std::vector<int>& to) {
     Vector x(n);
-    const Vector Bi = B * iprev;
-    for (std::size_t i = 0; i < n; ++i) x[i] = vprev[i] + Bi[i];
+    if (config::euler) {
+        x = L2 * iprev;
+    } else {
+        const Vector Bi = B * iprev;
+        for (std::size_t i = 0; i < n; ++i) x[i] = vprev[i] + Bi[i];
+    }
     ih = A * x;
     for (std::size_t i = 0; i < n; ++i) {
         h[from[i]] += ih[i];
@@ -235,6 +312,19 @@ CoupledRL CoupledRL::fromSequence(std::vector<int> from, std::vector<int> to, do
     return CoupledRL(std::move(from), std::move(to), sequenceMatrix(R1, R0), sequenceMatrix(L1, L0));
 }
 
+namespace {
+void pushAll(Vector& out, const Vector& x) { out.insert(out.end(), x.begin(), x.end()); }
+std::size_t readAll(Vector& x, const Vector& s, std::size_t pos) {
+    for (double& v : x) v = s[pos++];
+    return pos;
+}
+}  // namespace
+
+void CoupledRL::saveState(Vector& out) const { pushAll(out, rl_.vprev); pushAll(out, rl_.iprev); }
+std::size_t CoupledRL::loadState(const Vector& s, std::size_t pos) { return readAll(rl_.iprev, s, readAll(rl_.vprev, s, pos)); }
+void CoupledC::saveState(Vector& out) const { pushAll(out, vprev_); pushAll(out, iprev_); }
+std::size_t CoupledC::loadState(const Vector& s, std::size_t pos) { return readAll(iprev_, s, readAll(vprev_, s, pos)); }
+
 std::vector<std::string> CoupledRL::currentNames() const {
     std::vector<std::string> names;
     for (std::size_t k = 0; k < from_.size(); ++k) names.push_back(phaseName(name, k, from_.size()));
@@ -260,7 +350,7 @@ void CoupledC::history(double t, Vector& h) {
     (void)t;
     const Vector Gv = G_ * vprev_;
     for (std::size_t i = 0; i < Gv.size(); ++i) {
-        ih_[i] = -(Gv[i] + iprev_[i]);
+        ih_[i] = config::euler ? -Gv[i] : -(Gv[i] + iprev_[i]);
         h[i] = ih_[i];
     }
 }
@@ -303,6 +393,7 @@ BergeronLine::BergeronLine(std::vector<int> kEnd, std::vector<int> mEnd, std::ve
         Ym(j, j) = 1.0 / Z_[j];
     }
     Yp_ = transpose(T_) * Ym * T_;
+    ts_.assign(1, config::srtTime);
     vk_.assign(M_, {0.0}); ik_.assign(M_, {0.0}); vm_.assign(M_, {0.0}); im_.assign(M_, {0.0});
     Ihk_.assign(M_, 0.0); Ihm_.assign(M_, 0.0);
     ikPhase_.assign(M_, 0.0); imPhase_.assign(M_, 0.0);
@@ -317,11 +408,11 @@ void BergeronLine::stamp(Matrix& g) const {
 }
 
 double BergeronLine::delayed(const std::vector<double>& s, double t, double tau) const {
-    const double x = (t - tau - config::srtTime) / config::Dt;
-    if (x <= 0.0) return x < 0.0 ? 0.0 : s[0];
-    const std::size_t i = static_cast<std::size_t>(x);
-    if (i + 1 >= s.size()) return s.back();
-    const double f = x - static_cast<double>(i);
+    const double x = t - tau;
+    if (x <= ts_[0]) return x < ts_[0] ? 0.0 : s[0];
+    const std::size_t i = static_cast<std::size_t>(std::upper_bound(ts_.begin(), ts_.end(), x) - ts_.begin()) - 1;
+    if (i + 1 >= ts_.size()) return s.back();
+    const double f = (x - ts_[i]) / (ts_[i + 1] - ts_[i]);
     return s[i] * (1.0 - f) + s[i + 1] * f;
 }
 
@@ -342,7 +433,6 @@ void BergeronLine::history(double t, Vector& h) {
 }
 
 void BergeronLine::update(double t, const Vector& v) {
-    (void)t;
     Vector vkp(M_), vmp(M_);
     for (std::size_t p = 0; p < M_; ++p) { vkp[p] = v[p]; vmp[p] = v[M_ + p]; }
     const Vector vkm = T_ * vkp, vmm = T_ * vmp;
@@ -353,9 +443,40 @@ void BergeronLine::update(double t, const Vector& v) {
         vk_[j].push_back(vkm[j]); ik_[j].push_back(ikm[j]);
         vm_[j].push_back(vmm[j]); im_[j].push_back(imm[j]);
     }
+    ts_.push_back(t);
     const Matrix Tt = transpose(T_);
     ikPhase_ = Tt * ikm;
     imPhase_ = Tt * imm;
+}
+
+void BergeronLine::saveState(Vector& out) const {
+    out.push_back(static_cast<double>(ts_.size()));
+    out.push_back(ts_.back());
+    for (std::size_t j = 0; j < M_; ++j) {
+        out.push_back(vk_[j].back()); out.push_back(ik_[j].back());
+        out.push_back(vm_[j].back()); out.push_back(im_[j].back());
+    }
+    pushAll(out, ikPhase_);
+    pushAll(out, imPhase_);
+}
+
+std::size_t BergeronLine::loadState(const Vector& s, std::size_t pos) {
+    const double c = s[pos];
+    const std::size_t k = static_cast<std::size_t>(std::floor(c + 1e-9));
+    ts_.resize(std::min(k, ts_.size()));
+    for (std::size_t j = 0; j < M_; ++j)
+        for (auto* x : {&vk_[j], &ik_[j], &vm_[j], &im_[j]}) x->resize(std::min(k, x->size()));
+    if (c - static_cast<double>(k) > 1e-9) {
+        ts_.push_back(s[pos + 1]);
+        for (std::size_t j = 0; j < M_; ++j) {
+            const std::size_t q = pos + 2 + 4 * j;
+            vk_[j].push_back(s[q]); ik_[j].push_back(s[q + 1]);
+            vm_[j].push_back(s[q + 2]); im_[j].push_back(s[q + 3]);
+        }
+    }
+    pos += 2 + 4 * M_;
+    pos = readAll(ikPhase_, s, pos);
+    return readAll(imPhase_, s, pos);
 }
 
 std::vector<std::string> BergeronLine::currentNames() const {
@@ -378,6 +499,7 @@ TransformerCore::TransformerCore(int p, int q, int s, int t, double n, double R,
     if (!(R + 2.0 * L / config::Dt > 0.0)) throw std::invalid_argument("Transformer: leakage R and L cannot both be zero");
     A_ = 1.0 / (R + 2.0 * L / config::Dt);
     B_ = 2.0 * L / config::Dt - R;
+    L2_ = 2.0 * L / config::Dt;
 }
 
 void TransformerCore::stamp(Matrix& g) const {
@@ -387,7 +509,7 @@ void TransformerCore::stamp(Matrix& g) const {
 
 void TransformerCore::history(double t, Vector& h) {
     (void)t;
-    ih_ = A_ * (vprev_ + B_ * i_);
+    ih_ = config::euler ? A_ * L2_ * i_ : A_ * (vprev_ + B_ * i_);
     for (int j = 0; j < 4; ++j) h[j] += a_[j] * ih_;
 }
 
@@ -431,18 +553,21 @@ void SaturableInductor::segmentOf(double lambda, int& seg, int& sign) const {
 
 void SaturableInductor::stamp(Matrix& g) const { stamp2(g, config::Dt / (2.0 * slopeL(seg_))); }
 
+// flux before this step's own voltage: lambda_prev + dt/2 v_prev (trapezoidal), lambda_prev (Euler)
+double SaturableInductor::flux0() const { return config::euler ? lambda_ : lambda_ + 0.5 * config::Dt * vprev_; }
+
 void SaturableInductor::history(double t, Vector& h) {
     (void)t;
-    // segment: i = s i0 + (lambda - s lambda0) / L, with lambda = lambda_prev + dt/2 (v_prev + v)
+    // segment: i = s i0 + (lambda - s lambda0) / L, with lambda = flux0 + dt/2 v
     const double L = slopeL(seg_), s = sign_;
-    ih_ = s * ip_[seg_] + (lambda_ + 0.5 * config::Dt * vprev_ - s * lp_[seg_]) / L;
+    ih_ = s * ip_[seg_] + (flux0() - s * lp_[seg_]) / L;
     h[0] = ih_;
     h[1] = -ih_;
 }
 
 bool SaturableInductor::check(double t, const Vector& v) {
     (void)t;
-    const double lam = lambda_ + 0.5 * config::Dt * (vprev_ + v[0] - v[1]);
+    const double lam = flux0() + 0.5 * config::Dt * (v[0] - v[1]);
     int seg = 0, sign = 1;
     segmentOf(lam, seg, sign);
     if (seg != seg_ || (seg != 0 && sign != sign_)) {
@@ -456,7 +581,7 @@ bool SaturableInductor::check(double t, const Vector& v) {
 void SaturableInductor::update(double t, const Vector& v) {
     (void)t;
     const double vb = v[0] - v[1];
-    lambda_ += 0.5 * config::Dt * (vprev_ + vb);
+    lambda_ = flux0() + 0.5 * config::Dt * vb;
     i_ = config::Dt / (2.0 * slopeL(seg_)) * vb + ih_;
     vprev_ = vb;
 }
@@ -549,6 +674,34 @@ void Diode::update(double t, const Vector& v) {
     (void)t;
     const double vb = v[0] - v[1];
     i_ = on_ ? (vb - Vf_) / Ron_ : vb / Roff_;
+    v_ = vb;
+}
+
+// turn on where the voltage crosses Vf (with the gate fired), off where the current crosses zero
+double Diode::eventAlpha(double a, double dt) const {
+    const double b = a + dt;
+    if (!on_) {
+        const double vb = v_;
+        if (vb <= Vf_) return -1.0;
+        const double va = va_;
+        double al = va >= Vf_ ? 0.0 : (Vf_ - va) / (vb - va);
+        const double t = a + al * dt;
+        if (!gate(t)) {
+            if (!gate(b)) return -1.0;
+            double lo = t, hi = b;                 // the gate fires during the step: find when
+            for (int k = 0; k < 50; ++k) {
+                const double mid = 0.5 * (lo + hi);
+                if (gate(mid)) hi = mid; else lo = mid;
+            }
+            al = (hi - a) / dt;
+        }
+        return std::min(1.0, std::max(0.0, al));
+    }
+    const double ib = i_;
+    if (ib >= 0.0) return -1.0;
+    const double ia = ia_;
+    if (ia <= 0.0) return 0.0;
+    return std::min(1.0, std::max(0.0, ia / (ia - ib)));
 }
 
 Thyristor::Thyristor(int anode, int cathode, double alpha_deg, double frequency, double ref_deg, double width_deg,
@@ -584,8 +737,19 @@ void SynchronousMachine::update(double t, const Vector& v) {
     Vector e(3);
     knownVoltages(t, e);
     Pe_ = (e[0] * rl_.iprev[0] + e[1] * rl_.iprev[1] + e[2] * rl_.iprev[2]) / S_;
-    w_ += config::Dt * (Pm_ - Pe_ - D_ * (w_ - 1.0)) / (2.0 * H_);   // swing equation (per unit)
-    delta_ += config::Dt * ws_ * (w_ - 1.0);
+    w_ += config::step * (Pm_ - Pe_ - D_ * (w_ - 1.0)) / (2.0 * H_);   // swing equation (per unit)
+    delta_ += config::step * ws_ * (w_ - 1.0);
+}
+
+void SynchronousMachine::saveState(Vector& out) const {
+    pushAll(out, rl_.vprev); pushAll(out, rl_.iprev);
+    out.push_back(w_); out.push_back(delta_); out.push_back(Pe_);
+}
+
+std::size_t SynchronousMachine::loadState(const Vector& s, std::size_t pos) {
+    pos = readAll(rl_.iprev, s, readAll(rl_.vprev, s, pos));
+    w_ = s[pos]; delta_ = s[pos + 1]; Pe_ = s[pos + 2];
+    return pos + 3;
 }
 
 std::vector<std::string> SynchronousMachine::currentNames() const {
@@ -634,7 +798,7 @@ void InductionMachine::update(double t, const Vector& v) {
     rl_.update(rl_.branchVoltage(v, tpos_, xpos_));   // current from the terminal into the machine
     const cplx a = std::polar(1.0, 2.0 * PI / 3.0);
     const cplx is = (2.0 / 3.0) * (rl_.iprev[0] + a * rl_.iprev[1] + a * a * rl_.iprev[2]);
-    const double h = config::Dt;
+    const double h = config::step;
     const cplx A = cplx(-Rr_ / Lr_, P2_ * wm_), B = Rr_ * Lm_ / Lr_;
     const cplx psi = (psir_ * (1.0 + A * h / 2.0) + B * h / 2.0 * (is + isprev_)) / (1.0 - A * h / 2.0);
     Te_ = 1.5 * P2_ * (Lm_ / Lr_) * (psi.real() * is.imag() - psi.imag() * is.real());
@@ -644,6 +808,21 @@ void InductionMachine::update(double t, const Vector& v) {
     eprime_ = (Lm_ / Lr_) * (A2 * psi + B * is);
     psir_ = psi;
     isprev_ = is;
+}
+
+void InductionMachine::saveState(Vector& out) const {
+    pushAll(out, rl_.vprev); pushAll(out, rl_.iprev);
+    out.push_back(wm_);
+    for (const cplx& c : {psir_, isprev_, eprime_}) { out.push_back(c.real()); out.push_back(c.imag()); }
+    out.push_back(Te_);
+}
+
+std::size_t InductionMachine::loadState(const Vector& s, std::size_t pos) {
+    pos = readAll(rl_.iprev, s, readAll(rl_.vprev, s, pos));
+    wm_ = s[pos++];
+    for (cplx* c : {&psir_, &isprev_, &eprime_}) { *c = cplx(s[pos], s[pos + 1]); pos += 2; }
+    Te_ = s[pos];
+    return pos + 1;
 }
 
 std::vector<std::string> InductionMachine::currentNames() const {

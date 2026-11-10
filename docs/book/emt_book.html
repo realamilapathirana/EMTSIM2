@@ -351,6 +351,9 @@ EMTSim gives the same numbers, to the last digit. So you can run every example y
 value. This is the circuit of chapter 4:</p>
 <pre># Tiny book of EMT simulation, chapter 4: closing a switch on a 10 V battery, 1 ohm, 1 mH.
 # The circuit is at rest before t = 0; the battery is connected at t = 0.
+# The book works through the plain trapezoidal rule (chapter 8 shows its chatter), so
+# chatter removal and switching interpolation are off here.
+.options chatter=off interp=off
 .tran 0.0001 0.005
 V 0 1  10 0 0      # BATTERY   (peak 10 V, angle 0, frequency 0 = DC)
 R 1 2  1           # R
@@ -358,6 +361,9 @@ L 2 0  0.001       # L</pre>
 <p>and this is the network with the fault, from chapter 6:</p>
 <pre># Tiny book of EMT simulation, chapter 6: the network of chapter 5 with a fault at node 3
 # from 30 ms to 60 ms.
+# The book works through the plain trapezoidal rule (chapter 8 shows its chatter), so
+# chatter removal and switching interpolation are off here.
+.options chatter=off interp=off
 .tran 0.00005 0.08
 V 0 1  100 0 50    # SOURCE
 R 1 2  1           # R1
