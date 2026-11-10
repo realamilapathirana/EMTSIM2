@@ -111,6 +111,7 @@
   #tabs .tab.active { color: var(--text); border-bottom-color: var(--teal); font-weight: 600; }
   #tabs .spacer { flex: 1; }
   #tabs label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #tabs input[type="checkbox"] { width: auto; min-width: 0; margin: 0; padding: 0; }
   #tabs input { width: 110px; padding: 2px 6px; }
   .pane { flex: 1; overflow: auto; padding: 10px 12px; display: none; }
   .pane.active { display: block; }
@@ -202,6 +203,7 @@
     <div class="spacer"></div>
     <label><select id="resultKind" title="Node voltages, or branch currents and machine quantities">
       <option value="V">Voltages</option><option value="I">Currents</option></select></label>
+    <label title="Keep this run and the zoom as a reference: later runs are drawn over it (grey dashed) until unticked"><input type="checkbox" id="hold"> Hold run</label>
     <label id="filterLabel">Show nodes <input type="text" id="nodeFilter" value="all" title="all, or e.g. 1,3,5-8; for currents, part of a name"></label>
   </div>
   <div class="pane active" id="pane-results">
@@ -961,8 +963,11 @@ async function run() {
       const run = r[eng];
       res.overlay = run.error ? { error: run.error } : Object.assign({ label: ov === 'cda' ? 'with chatter removal & interpolation' : 'plain method (both off)' }, run);
     }
+    if ($('hold').checked) {           // compare with the held run; the first run while ticked becomes it
+      if (held) res.overlay = held; else held = snapshot(res, currentText());
+    }
     results = res;
-    plotZoom = null;
+    if (!$('hold').checked) plotZoom = null;
     const errs = ['cpp', 'python'].filter((k) => results[k] && results[k].error).map((k) => (k === 'cpp' ? 'C++' : 'Python') + ': ' + results[k].error);
     $('logText').textContent = ['cpp', 'python'].filter((k) => results[k]).map((k) =>
       '=== ' + (k === 'cpp' ? 'C++' : 'Python') + ' ===\n' + (results[k].error ? 'ERROR: ' + results[k].error + '\n' : '') + (results[k].log || '(no switching events)')).join('\n\n');
@@ -976,6 +981,31 @@ async function run() {
   }
 }
 $('btnRun').onclick = run;
+
+// Hold run: the reference a later run is compared with (the grey dashed overlay)
+let held = null;
+function optionsOf(text) {        // chatter / interp states of a netlist, as in its .options line (default on)
+  const st = { chatter: 'on', interp: 'on' };
+  for (const m of text.matchAll(/^\s*\.options\s+(.*)$/gim))
+    for (const kv of m[1].split(/\s+/)) { const [k, v] = kv.split('='); if (k in st && v) st[k] = /^(on|1|true|yes)$/i.test(v) ? 'on' : 'off'; }
+  return st;
+}
+function snapshot(res, text) {
+  const run = res.cpp && !res.cpp.error ? res.cpp : res.python && !res.python.error ? res.python : null;
+  if (!run) return null;
+  const o = optionsOf(text);
+  return Object.assign({ label: 'held run: ' + (run === res.cpp ? 'C++' : 'Python') + ', chatter ' + o.chatter + ', interp ' + o.interp }, run);
+}
+function holdChip() {
+  if (!$('hold').checked) return '';
+  return '<span class="chip" style="background:#FFF6E6">' + (held ? 'holding: ' + held.label.replace('held run: ', '') + ' · change a setting and ▶ Run to compare'
+                                                                  : 'the next run will be held') + '</span>';
+}
+$('hold').addEventListener('change', () => {
+  held = $('hold').checked && results ? snapshot(results, currentText()) : null;
+  if (!$('hold').checked && results) delete results.overlay;
+  renderResults();
+});
 
 // The netlist with chatter removal and switching interpolation both on or both off
 function withOptions(text, on) {
@@ -1041,6 +1071,7 @@ function renderResults() {
                          : '<span class="legend"><i' + (cpp ? '' : ' style="border-top-color:var(--orange)"') + '></i>' + (cpp ? 'C++' : 'Python') + '</span>');
   }
   if (ov) chips.push(ov.chips);
+  chips.push(holdChip());
   sum.innerHTML = chips.join('') + ZOOM_CHIP;
 
   let idx = parseFilter($('nodeFilter').value, groups);
@@ -1085,7 +1116,8 @@ function overlayFor(main, key, unit) {
   const o = results.overlay;
   if (!o) return null;
   if (o.error) return { run: null, chips: '<span class="chip" style="background:#FDECEC">overlay failed: ' + o.error + '</span>' };
-  if (!o[key] || o[key].length !== main[key].length || o.t.length !== main.t.length) return null;
+  if (!o[key] || o[key].length !== main[key].length || o.t.length !== main.t.length)
+    return { run: null, chips: '<span class="chip" style="background:#FDECEC">' + o.label + ' has a different time grid or circuit, so it cannot be overlaid</span>' };
   let d = 0;
   for (let j = 0; j < main[key].length; j++)
     for (let i = 0; i < main.t.length; i++) d = Math.max(d, Math.abs(main[key][j][i] - o[key][j][i]));
@@ -1112,7 +1144,7 @@ function renderCurrents(cpp, py, main, sum, box) {
   sum.innerHTML = '<span class="chip"><b>' + groups.length + '</b> elements · <b>' + names.length + '</b> signals</span>' +
     '<span class="legend">currents flow from the first terminal into the element; [pu] and [deg] are machine quantities</span>' +
     (capped ? '<span class="chip" style="background:#FFF6E6">showing the first ' + MAX + ': type part of a name in Show</span>' : '') +
-    (ovI ? ovI.chips : '') + ZOOM_CHIP;
+    (ovI ? ovI.chips : '') + holdChip() + ZOOM_CHIP;
   box.innerHTML = '';
   for (const g of shown) {
     const card = document.createElement('div');
