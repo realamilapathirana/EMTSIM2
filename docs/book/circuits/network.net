@@ -1,0 +1,8 @@
+# Tiny book of EMT simulation, chapter 4: a 100 V, 50 Hz source feeding a line (R1, L),
+# a cable capacitance C and a 100 ohm load.
+.tran 0.00005 0.08
+V 0 1  100 0 50    # SOURCE
+R 1 2  1           # R1
+L 2 3  0.01        # L
+C 3 0  10e-6       # C
+R 3 0  100         # LOAD

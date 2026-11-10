@@ -331,6 +331,8 @@ constexpr double defaultStop = 1000 * defaultDt;   // stop time (s)
 
 ## How it works
 
+New to EMT simulation? Start with the [Tiny book of EMT simulation](docs/book/TinyBookOfEMT.pdf), a short step-by-step introduction that works through companion models, nodal equations, switches and faults with numbers you can check against EMTSim (rebuild it with `python docs/book/make_book.py`).
+
 ### 1. Companion models
 
 The trapezoidal rule turns each inductor and capacitor into a resistor in parallel with a *history current source*. The history current depends only on the branch's voltage and current from the previous time step. Every branch then has the form
@@ -426,5 +428,6 @@ Contributions are welcome. Fork it and improve it.
 
 ## Further reading
 
+- A. Pathirana, *Tiny book of EMT simulation*, [docs/book/TinyBookOfEMT.pdf](docs/book/TinyBookOfEMT.pdf).
 - H. W. Dommel, "Digital Computer Solution of Electromagnetic Transients in Single- and Multiphase Networks," *IEEE Trans. PAS*, 1969.
 - N. Watson and J. Arrillaga, *Power Systems Electromagnetic Transients Simulation*, IET, 2003.

@@ -1,0 +1,364 @@
+<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Tiny book of EMT simulation</title><style>
+@page { size: letter; margin: 0.95in 1.05in 0.9in 1.05in;
+  @bottom-left { content: counter(page) "  |  Page"; font: 10pt Calibri, 'Segoe UI', sans-serif; color: #7f7f7f;
+                 border-top: 0.6pt solid #d0d0d0; vertical-align: top; padding-top: 4pt; width: 100%; } }
+@page :first { @bottom-left { content: none; border: none; } }
+html { background: white; }
+body { font-family: Georgia, 'Times New Roman', serif; font-size: 12.5pt; line-height: 1.32; color: #111;
+       margin: 0; background: white; }
+math { font-family: 'Cambria Math', 'STIX Two Math', serif; font-size: 1.05em; }
+.num, mn.num { color: #C55A11; }
+p { margin: 0 0 0.75em; text-align: justify; text-indent: 1.6em; hyphens: auto; }
+h2 { background: #000; color: #fff; font-size: 15.5pt; font-weight: bold; padding: 2pt 10pt 1pt;
+     margin: 1.3em 0 0.6em; break-after: avoid; }
+h3 { background: #000; color: #fff; font-size: 14pt; font-weight: bold; padding: 1pt 10pt 0;
+     margin: 1.2em 0 0.55em 0.9in; break-after: avoid; }
+h2 + p, h3 + p { break-before: avoid; }
+p.step { text-indent: 0; font-weight: bold; display: inline-block; background: #d9d9d9; padding: 0 5pt;
+         margin: 0.6em 0 0.4em 0.9in; }
+.eq { position: relative; margin: 0.5em 0 0.7em; break-inside: avoid; text-align: center; }
+.eqn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
+figure { margin: 0.9em 0 1em; text-align: center; break-inside: avoid; }
+figure img { display: block; margin: 0 auto; }
+figcaption { text-align: left; font-size: 11.5pt; margin-top: 0.35em; }
+table { border-collapse: collapse; margin: 0.6em auto 1em; font-size: 11pt; break-inside: avoid; }
+table.narrow { margin-left: auto; margin-right: auto; }
+caption { caption-side: top; text-align: left; font-size: 11.5pt; padding-bottom: 0.4em; }
+th, td { border-bottom: 0.6pt solid #bbb; padding: 2pt 9pt; text-align: right; }
+th { border-bottom: 1.2pt solid #000; font-weight: bold; }
+td:first-child, th:first-child { text-align: left; }
+pre { font-family: Consolas, 'Courier New', monospace; font-size: 9.6pt; background: #f2f2f2;
+      border-left: 3pt solid #000; padding: 6pt 10pt; white-space: pre-wrap; break-inside: avoid; line-height: 1.25; }
+code { font-family: Consolas, monospace; font-size: 0.9em; }
+.loop { border: 1pt solid #000; padding: 8pt 14pt 4pt; margin: 0.6em 0 1em; break-inside: avoid; }
+.loop div { margin-bottom: 4pt; }
+.loop ol { margin: 2pt 0 6pt; padding-left: 1.6em; }
+.loop li { margin-bottom: 2pt; }
+/* cover */
+.cover { height: 9.1in; display: flex; flex-direction: column; align-items: center; break-after: page; }
+.titlebox { background: #000; color: #fff; font-family: 'Segoe Script', 'Segoe Print', cursive; font-size: 40pt;
+            line-height: 1.25; text-align: center; padding: 18pt 28pt 22pt; width: 82%; margin-top: 0.1in; }
+.subtitle { font-family: 'Segoe Script', 'Segoe Print', cursive; color: #7f7f7f; font-size: 30pt; margin: 0.35in 0 0.25in; }
+.tile-wrap { display: flex; flex-direction: column; align-items: center; }
+.tile { width: 1.65in; height: 3.75in; border-radius: 10pt; background: white; border: 1pt solid #cfcfcf;
+        box-shadow: inset 0 0 14pt rgba(0,0,0,0.25), 0 1pt 3pt rgba(0,0,0,0.2); overflow: hidden;
+        display: flex; align-items: center; justify-content: center; }
+.tile img { width: 88%; height: 92%; object-fit: contain; }
+.tile.reflection { height: 0.9in; transform: scaleY(-1); opacity: 0.35; margin-top: 3pt; border: none; box-shadow: none;
+                   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.9) 100%);
+                   mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.9) 100%);
+                   align-items: flex-end; }
+.tile.reflection img { height: 3.45in; width: 88%; object-fit: contain; object-position: bottom; }
+.author { margin-top: auto; background: #000; color: #fff; font-family: 'Segoe Script', 'Segoe Print', cursive;
+          font-size: 21pt; width: 100%; text-align: center; padding: 3pt 0 5pt; }
+@media screen { body { max-width: 6.4in; margin: 0.6in auto; } .cover { height: auto; min-height: 9.1in; } }
+</style></head><body>
+<section class="cover">
+  <div class="titlebox">Tiny book of EMT simulation</div>
+  <div class="subtitle">Closing a switch</div>
+  <div class="tile-wrap"><div class="tile"><img src="fig/cover.svg" alt=""></div>
+  <div class="tile reflection"><img src="fig/cover.svg" alt=""></div></div>
+  <div class="author">By Amila Pathirana</div>
+</section>
+
+
+<h2>1. Introduction</h2>
+<p>When you flick a light switch, close a circuit breaker, or lightning strikes a line, the voltages
+and currents in the network do not jump straight to their new values. For a few milliseconds they
+swing, overshoot and ring before they settle down. These short events are called
+<b>electromagnetic transients</b>, and <b>EMT simulation</b> is the way we calculate them on a computer.</p>
+<p>Most power-system tools, such as load flow and short-circuit programs, work with phasors. A phasor
+describes a sine wave that has been running forever with a fixed amplitude and phase. That is perfect
+for the steady state, but it cannot tell you what happens in the first few milliseconds after a switch
+closes, because nothing is a steady sine wave yet.</p>
+<p>The good news is that EMT simulation is built from things you already know: Ohm's law, Kirchhoff's
+current law, and the two equations of the inductor and the capacitor. There is only one new trick, called
+the <i>companion model</i>, and it is much simpler than it sounds.</p>
+<p>Going through a simple example is the best way to understand EMT simulation. Here is one such example.</p>
+
+
+<h2>2. A simple example: a photo and a movie</h2>
+<p>Imagine you want to tell a friend how a child on a swing is moving. You could give them one photo of
+the swing with a note on the back: <i>"it swings one metre each way, once every two seconds."</i> That is
+a phasor: one picture, plus an amplitude and a frequency. It works perfectly, as long as the swing keeps
+moving the same way.</p>
+<p>Now someone gives the swing a hard push. Your photo cannot tell your friend what happens next. For
+that you need a movie: one picture every fraction of a second, where each picture follows from the one
+before it.</p>
+<figure><img src="fig/photo_movie.svg" style="width:100%">
+<figcaption>Figure 1: A phasor is one photo of a steady sine wave. An EMT simulation is a movie: the
+network is calculated again every time step Δt, and each frame follows from the frame before it.</figcaption></figure>
+<p>EMT simulation is the movie. We calculate the network at one small time step Δt after another, and
+each step is calculated from the step before it. A small Δt gives a smooth movie but needs more frames,
+which means more work. Typical time steps are 20 to 100 μs for switching studies, a few μs for
+power electronics, and well below a microsecond for lightning.</p>
+
+
+<h2>3. An EMT simulation of a simple circuit</h2>
+<p>Figure 2 shows the circuit we will simulate: a 10 V battery, a switch, a 1 Ω resistor and a 1 mH
+inductor. Everything is at rest, and the switch closes at <i>t</i> = 0. What is the current
+<i>i</i>(<i>t</i>)?</p>
+<figure><img src="fig/rl_circuit.svg" style="width:68%">
+<figcaption>Figure 2: The circuit of this chapter. Node 1 is the battery's terminal, node 2 is the
+top of the inductor.</figcaption></figure>
+<p>This circuit is simple enough to solve with pen and paper, and that is exactly why we use it: the exact
+answer lets us check our simulation.</p>
+<div class='eq'><math display='block'><mrow><mi>i</mi><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo><mo>=</mo><mfrac><mrow><mi>V</mi></mrow><mrow><mi>R</mi></mrow></mfrac><mrow><mo>(</mo><mrow><mn>1</mn><mo>−</mo><msup><mrow><mi>e</mi></mrow><mrow><mo>−</mo><mi>t</mi><mo>/</mo><mi>τ</mi></mrow></msup></mrow><mo>)</mo></mrow><mo>,</mo><mspace width='1em'/><mi>τ</mi><mo>=</mo><mfrac><mrow><mi>L</mi></mrow><mrow><mi>R</mi></mrow></mfrac><mo>=</mo><mn>1</mn><mspace width='0.2em'/><mi mathvariant='normal'>ms</mi></mrow></math></div>
+<p>The current rises towards <i>V</i>/<i>R</i> = 10 A, and reaches 63 % of it after one time constant
+τ = 1 ms. Our goal is to get the same answer without solving any differential equation: only
+arithmetic with resistors.</p>
+
+<h3>a. Chop time into small steps</h3>
+<p>We choose a time step Δt = 0.1 ms and calculate the circuit only at <i>t</i> = Δt, 2Δt, 3Δt and so
+on. The resistor is easy: at every instant its current is its voltage divided by <i>R</i>. The inductor
+is the troublemaker:</p>
+<div class='eq'><math display='block'><mrow><mi>v</mi><mo>=</mo><mi>L</mi><mfrac><mrow><mi mathvariant='normal'>di</mi></mrow><mrow><mi mathvariant='normal'>dt</mi></mrow></mfrac></mrow></math></div>
+<p>This equation links the current now to how the current was changing a moment ago. To handle it we
+need the companion model.</p>
+
+<h3>b. The companion model</h3>
+<p>"Companion model" sounds complex, but it is not.</p>
+<p>Rearrange the inductor equation and add up (integrate) the voltage over one time step:</p>
+<div class='eq'><math display='block'><mrow><mi>i</mi><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo><mo>=</mo><mi>i</mi><mo stretchy='false'>(</mo><mi>t</mi><mo>−</mo><mi mathvariant='normal'>Δ</mi><mi>t</mi><mo stretchy='false'>)</mo><mo>+</mo><mfrac><mrow><mn>1</mn></mrow><mrow><mi>L</mi></mrow></mfrac><mrow><msubsup><mo>∫</mo><mrow><mi>t</mi><mo>−</mo><mi mathvariant='normal'>Δ</mi><mi>t</mi></mrow><mrow><mi>t</mi></mrow></msubsup><mrow><mi>v</mi><mi mathvariant='normal'>dt</mi></mrow></mrow></mrow></math><span class='eqn'>(1)</span></div>
+<p>We do not know exactly how <i>v</i> changes inside the step, so we approximate the integral by the
+area of a trapezoid, as in Figure 3. This is called the <b>trapezoidal rule</b>.</p>
+<figure><img src="fig/trapezoid.svg" style="width:52%">
+<figcaption>Figure 3: The trapezoidal rule. The area under the curve (the integral of <i>v</i>) is
+replaced by the area of the orange trapezoid. The small grey sliver is the error.</figcaption></figure>
+<div class='eq'><math display='block'><mrow><mrow><msubsup><mo>∫</mo><mrow><mi>t</mi><mo>−</mo><mi mathvariant='normal'>Δ</mi><mi>t</mi></mrow><mrow><mi>t</mi></mrow></msubsup><mrow><mi>v</mi><mi mathvariant='normal'>dt</mi></mrow></mrow><mo>≈</mo><mfrac><mrow><mi mathvariant='normal'>Δ</mi><mi>t</mi></mrow><mrow><mn>2</mn></mrow></mfrac><mrow><mo>[</mo><mrow><mi>v</mi><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo><mo>+</mo><mi>v</mi><mo stretchy='false'>(</mo><mi>t</mi><mo>−</mo><mi mathvariant='normal'>Δ</mi><mi>t</mi><mo stretchy='false'>)</mo></mrow><mo>]</mo></mrow></mrow></math><span class='eqn'>(2)</span></div>
+<p>Put (2) into (1) and sort the terms into the ones that belong to <i>now</i> and the ones that belong
+to the <i>last step</i>:</p>
+<div class='eq'><math display='block'><mrow><mi>i</mi><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo><mo>=</mo><mfrac><mrow><mi mathvariant='normal'>Δ</mi><mi>t</mi></mrow><mrow><mn>2</mn><mi>L</mi></mrow></mfrac><mi>v</mi><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo><mo>+</mo><mrow><mo>[</mo><mrow><mi>i</mi><mo stretchy='false'>(</mo><mi>t</mi><mo>−</mo><mi mathvariant='normal'>Δ</mi><mi>t</mi><mo stretchy='false'>)</mo><mo>+</mo><mfrac><mrow><mi mathvariant='normal'>Δ</mi><mi>t</mi></mrow><mrow><mn>2</mn><mi>L</mi></mrow></mfrac><mi>v</mi><mo stretchy='false'>(</mo><mi>t</mi><mo>−</mo><mi mathvariant='normal'>Δ</mi><mi>t</mi><mo stretchy='false'>)</mo></mrow><mo>]</mo></mrow></mrow></math><span class='eqn'>(3)</span></div>
+<p>Look at the two parts of (3). The first part is a conductance Δt/2L multiplied by the voltage now.
+That is exactly how a resistor behaves, with resistance</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>R</mi></mrow><mrow><mi>L</mi></mrow></msub><mo>=</mo><mfrac><mrow><mn>2</mn><mi>L</mi></mrow><mrow><mi mathvariant='normal'>Δ</mi><mi>t</mi></mrow></mfrac></mrow></math></div>
+<p>The second part, in the brackets, only contains values from the last step, which we already know. We
+call it the <b>history current</b>. A current that is already known is simply a current source. So we
+can write (3) as</p>
+<div class='eq'><math display='block'><mrow><mi>i</mi><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo><mo>=</mo><mfrac><mrow><mi>v</mi><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo></mrow><mrow><msub><mrow><mi>R</mi></mrow><mrow><mi>L</mi></mrow></msub></mrow></mfrac><mo>+</mo><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi></mrow></msub><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo><mo>,</mo><mspace width='1em'/><mspace width='1em'/><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi></mrow></msub><mo stretchy='false'>(</mo><mi>t</mi><mo stretchy='false'>)</mo><mo>=</mo><mi>i</mi><mo stretchy='false'>(</mo><mi>t</mi><mo>−</mo><mi mathvariant='normal'>Δ</mi><mi>t</mi><mo stretchy='false'>)</mo><mo>+</mo><mfrac><mrow><mi>v</mi><mo stretchy='false'>(</mo><mi>t</mi><mo>−</mo><mi mathvariant='normal'>Δ</mi><mi>t</mi><mo stretchy='false'>)</mo></mrow><mrow><msub><mrow><mi>R</mi></mrow><mrow><mi>L</mi></mrow></msub></mrow></mfrac></mrow></math><span class='eqn'>(4)</span></div>
+<p>That is the whole trick. <b>For one time step, an inductor is a resistor in parallel with a current
+source.</b> The resistor never changes (as long as Δt does not change); only the current source is
+updated at every step. The capacitor gets the same treatment from <i>i</i> = <i>C</i>&#8202;d<i>v</i>/d<i>t</i>,
+with <i>R<sub>C</sub></i> = Δt/2C and a history current with the opposite sign (Figure 4).</p>
+<figure><img src="fig/companion.svg" style="width:86%">
+<figcaption>Figure 4: Companion models. For one time step, an inductor or a capacitor between nodes
+<i>k</i> and <i>m</i> becomes a resistor and a current source.</figcaption></figure>
+<p>For our inductor, <math><mrow><msub><mrow><mi>R</mi></mrow><mrow><mi>L</mi></mrow></msub><mo>=</mo><mfrac><mrow><mn>2</mn><mo>×</mo><mn>0.001</mn></mrow><mrow><mn>0.0001</mn></mrow></mfrac><mo>=</mo><mn>20</mn><mspace width='0.2em'/><mi mathvariant='normal'>Ω</mi></mrow></math>.</p>
+
+<h3>c. Solving one time step</h3>
+<p>Replace the inductor in Figure 2 with its companion model. Now the circuit contains only a battery,
+resistors and a current source (Figure 5), and we can solve it with nothing but Ohm's law.</p>
+<figure><img src="fig/rl_companion.svg" style="width:70%">
+<figcaption>Figure 5: The circuit of Figure 2 for one time step, with the inductor replaced by its
+companion model.</figcaption></figure>
+<p>The voltage of node 1 is known: it is the battery voltage <i>V</i>. The voltage of node 2,
+<i>v</i><sub>2</sub>, is unknown. Kirchhoff's current law at node 2 says that the current arriving
+through <i>R</i> leaves through the companion model:</p>
+<div class='eq'><math display='block'><mrow><mfrac><mrow><mrow><mi>V</mi><mo>−</mo><msub><mrow><mi>v</mi></mrow><mrow><mn>2</mn></mrow></msub></mrow></mrow><mrow><mi>R</mi></mrow></mfrac><mo>=</mo><mfrac><mrow><msub><mrow><mi>v</mi></mrow><mrow><mn>2</mn></mrow></msub></mrow><mrow><msub><mrow><mi>R</mi></mrow><mrow><mi>L</mi></mrow></msub></mrow></mfrac><mo>+</mo><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi></mrow></msub><mspace width='1em'/><mo>⟹</mo><mspace width='1em'/><msub><mrow><mi>v</mi></mrow><mrow><mn>2</mn></mrow></msub><mo>=</mo><mfrac><mrow><mrow><mfrac><mrow><mi>V</mi></mrow><mrow><mi>R</mi></mrow></mfrac><mo>−</mo><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi></mrow></msub></mrow></mrow><mrow><mrow><mfrac><mrow><mn>1</mn></mrow><mrow><mi>R</mi></mrow></mfrac><mo>+</mo><mfrac><mrow><mn>1</mn></mrow><mrow><msub><mrow><mi>R</mi></mrow><mrow><mi>L</mi></mrow></msub></mrow></mfrac></mrow></mrow></mfrac></mrow></math><span class='eqn'>(5)</span></div>
+<p>Once we have <i>v</i><sub>2</sub>, the inductor current follows from (4).</p>
+
+<h3>d. Step by step, with numbers</h3>
+<p>Before <i>t</i> = 0 everything is at rest: <i>i</i> = 0 and <i>v</i><sub>2</sub> = 0. Now let us
+go through the first steps. Here, I tried not to skip any steps, so you can follow every one of them.</p>
+<p class="step">Step 1, <i>t</i> = 0.1 ms</p>
+<p>The history current comes from the last step, when everything was at rest:</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi></mrow></msub><mo>=</mo><mn>0</mn><mo>+</mo><mfrac><mrow><mn>0</mn></mrow><mrow><mn>20</mn></mrow></mfrac><mo>=</mo><mn class='num'>0.0000</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math></div>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>v</mi></mrow><mrow><mn>2</mn></mrow></msub><mo>=</mo><mfrac><mrow><mn>10</mn><mo>/</mo><mn>1</mn><mo>−</mo><mn>0</mn></mrow><mrow><mn>1</mn><mo>/</mo><mn>1</mn><mo>+</mo><mn>1</mn><mo>/</mo><mn>20</mn></mrow></mfrac><mo>=</mo><mfrac><mrow><mn>10</mn></mrow><mrow><mn>1.05</mn></mrow></mfrac><mo>=</mo><mn class='num'>9.5238</mn><mspace width='0.2em'/><mi mathvariant='normal'>V</mi></mrow></math></div>
+<div class='eq'><math display='block'><mrow><mi>i</mi><mo>=</mo><mfrac><mrow><mn class='num'>9.5238</mn></mrow><mrow><mn>20</mn></mrow></mfrac><mo>+</mo><mn>0</mn><mo>=</mo><mn class='num'>0.4762</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math></div>
+<p class="step">Step 2, <i>t</i> = 0.2 ms</p>
+<p>Now the history current uses the results of step 1:</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi></mrow></msub><mo>=</mo><mn class='num'>0.4762</mn><mo>+</mo><mfrac><mrow><mn class='num'>9.5238</mn></mrow><mrow><mn>20</mn></mrow></mfrac><mo>=</mo><mn class='num'>0.9524</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math></div>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>v</mi></mrow><mrow><mn>2</mn></mrow></msub><mo>=</mo><mfrac><mrow><mrow><mn>10</mn><mo>−</mo><mn class='num'>0.9524</mn></mrow></mrow><mrow><mn>1.05</mn></mrow></mfrac><mo>=</mo><mn class='num'>8.6168</mn><mspace width='0.2em'/><mi mathvariant='normal'>V</mi></mrow></math></div>
+<div class='eq'><math display='block'><mrow><mi>i</mi><mo>=</mo><mfrac><mrow><mn class='num'>8.6168</mn></mrow><mrow><mn>20</mn></mrow></mfrac><mo>+</mo><mn class='num'>0.9524</mn><mo>=</mo><mn class='num'>1.3832</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math></div>
+<p class="step">Step 3, <i>t</i> = 0.3 ms</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi></mrow></msub><mo>=</mo><mn class='num'>1.3832</mn><mo>+</mo><mfrac><mrow><mn class='num'>8.6168</mn></mrow><mrow><mn>20</mn></mrow></mfrac><mo>=</mo><mn class='num'>1.8141</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math></div>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>v</mi></mrow><mrow><mn>2</mn></mrow></msub><mo>=</mo><mfrac><mrow><mrow><mn>10</mn><mo>−</mo><mn class='num'>1.8141</mn></mrow></mrow><mrow><mn>1.05</mn></mrow></mfrac><mo>=</mo><mn class='num'>7.7961</mn><mspace width='0.2em'/><mi mathvariant='normal'>V</mi></mrow></math></div>
+<div class='eq'><math display='block'><mrow><mi>i</mi><mo>=</mo><mfrac><mrow><mn class='num'>7.7961</mn></mrow><mrow><mn>20</mn></mrow></mfrac><mo>+</mo><mn class='num'>1.8141</mn><mo>=</mo><mn class='num'>2.2039</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math></div>
+<p>Every step is the same three lines: <b>history current, node voltage, branch current</b>. A computer
+does exactly this, only many thousands of times. Try calculating steps 4 and 5 yourself; Table 1 has
+the answers.</p>
+<table>
+<caption>Table 1: The first ten steps, and the exact current from the formula at the start of this chapter.</caption>
+<tr><th>step</th><th><i>t</i> (ms)</th><th><i>I</i><sub>hist</sub> (A)</th><th><i>v</i><sub>2</sub> (V)</th>
+<th><i>i</i> (A)</th><th>exact <i>i</i> (A)</th></tr>
+<tr><td>1</td><td>0.1</td><td class='num'>0.0000</td><td class='num'>9.5238</td><td class='num'>0.4762</td><td>0.9516</td></tr><tr><td>2</td><td>0.2</td><td class='num'>0.9524</td><td class='num'>8.6168</td><td class='num'>1.3832</td><td>1.8127</td></tr><tr><td>3</td><td>0.3</td><td class='num'>1.8141</td><td class='num'>7.7961</td><td class='num'>2.2039</td><td>2.5918</td></tr><tr><td>4</td><td>0.4</td><td class='num'>2.5937</td><td class='num'>7.0536</td><td class='num'>2.9464</td><td>3.2968</td></tr><tr><td>5</td><td>0.5</td><td class='num'>3.2990</td><td class='num'>6.3819</td><td class='num'>3.6181</td><td>3.9347</td></tr><tr><td>6</td><td>0.6</td><td class='num'>3.9372</td><td class='num'>5.7741</td><td class='num'>4.2259</td><td>4.5119</td></tr><tr><td>7</td><td>0.7</td><td class='num'>4.5146</td><td class='num'>5.2242</td><td class='num'>4.7758</td><td>5.0341</td></tr><tr><td>8</td><td>0.8</td><td class='num'>5.0370</td><td class='num'>4.7266</td><td class='num'>5.2734</td><td>5.5067</td></tr><tr><td>9</td><td>0.9</td><td class='num'>5.5097</td><td class='num'>4.2765</td><td class='num'>5.7235</td><td>5.9343</td></tr><tr><td>10</td><td>1.0</td><td class='num'>5.9374</td><td class='num'>3.8692</td><td class='num'>6.1308</td><td>6.3212</td></tr>
+</table>
+
+<h3>e. How good is the answer?</h3>
+<p>Figure 6 puts the simulated current next to the exact one. After a few steps the simulation follows
+the exact curve closely, but always slightly behind it. Why?</p>
+<figure><img src="fig/rl_result.svg" style="width:100%">
+<figcaption>Figure 6: Simulated (orange dots) and exact (grey) current. On the right, the first six
+steps: the simulation follows the exact curve delayed by half a time step (black dashes).</figcaption></figure>
+<p>Look at step 1 again. The trapezoidal rule assumed that the inductor voltage rose in a straight line
+from 0 V (at <i>t</i> = 0, when everything was at rest) to 9.52 V. In reality it jumped to
+10 V the moment the switch closed. A voltage that rises in a straight line over one step is, on average,
+the same as a voltage that jumps in the middle of the step. So the simulation behaves as if the switch
+had closed half a step late, at Δt/2. Shift the exact curve by Δt/2 and the two agree very well
+(right of Figure 6). Making Δt smaller makes the delay smaller:</p>
+<table>
+<caption>Table 2: The current at <i>t</i> = 1 ms for three time steps (exact: 6.3212 A).</caption>
+<tr><th>Δt (ms)</th><th>simulated <i>i</i> (A)</th><th>error (A)</th><th>error against the curve delayed by Δt/2 (A)</th></tr>
+<tr><td>0.5</td><td class='num'>5.2000</td><td>1.12121</td><td>0.07633</td></tr><tr><td>0.1</td><td class='num'>6.1308</td><td>0.19039</td><td>0.00177</td></tr><tr><td>0.02</td><td class='num'>6.2842</td><td>0.03704</td><td>0.00006</td></tr>
+</table>
+<p>The lesson: <b>Δt must be small compared with the fastest thing you want to see</b>. Here the time
+constant is 1 ms, and a step of 0.1 ms is plenty.</p>
+
+
+<h2>4. A bigger network</h2>
+<p>Real networks have many nodes, and writing Kirchhoff's law by hand for each of them gets old quickly.
+The computer does it with a matrix. Figure 7 shows a slightly bigger circuit: a 100 V, 50 Hz source
+feeding a line (<i>R</i>1 and <i>L</i>), a cable that adds capacitance <i>C</i>, and a 100 Ω load.
+The time step is Δt = 50 μs.</p>
+<figure><img src="fig/network.svg" style="width:80%">
+<figcaption>Figure 7: The network of chapters 4 and 5. Nodes 1, 2 and 3; node 0 is ground.</figcaption></figure>
+
+<h3>a. Building the conductance matrix</h3>
+<p>First, every element becomes a conductance (one over its resistance in the companion model):</p>
+<table class="narrow">
+<tr><th>element</th><th>between nodes</th><th>conductance</th></tr>
+<tr><td><i>R</i>1 = 1 Ω</td><td>1 and 2</td><td class='num'>1/1 = 1 S</td></tr>
+<tr><td><i>L</i> = 10 mH</td><td>2 and 3</td><td class='num'>Δt/2L = 0.0025 S</td></tr>
+<tr><td><i>C</i> = 10 μF</td><td>3 and ground</td><td class='num'>2C/Δt = 0.4 S</td></tr>
+<tr><td>LOAD = 100 Ω</td><td>3 and ground</td><td class='num'>1/100 = 0.01 S</td></tr>
+</table>
+<p>Then each one is "stamped" into the matrix <b>G</b> with one simple rule: a conductance <i>g</i>
+between nodes <i>k</i> and <i>m</i> adds <i>g</i> to <b>G</b><sub><i>kk</i></sub> and
+<b>G</b><sub><i>mm</i></sub>, and subtracts <i>g</i> from <b>G</b><sub><i>km</i></sub> and
+<b>G</b><sub><i>mk</i></sub>. If one end is ground, only the diagonal entry is touched. After all four
+stamps:</p>
+<div class='eq'><math display='block'><mrow><mi mathvariant='normal'>𝐆</mi><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>1.0000</mn></mtd><mtd><mn class='num'>−1.0000</mn></mtd><mtd><mn class='num'>0.0000</mn></mtd></mtr><mtr><mtd><mn class='num'>−1.0000</mn></mtd><mtd><mn class='num'>1.0025</mn></mtd><mtd><mn class='num'>−0.0025</mn></mtd></mtr><mtr><mtd><mn class='num'>0.0000</mn></mtd><mtd><mn class='num'>−0.0025</mn></mtd><mtd><mn class='num'>0.4125</mn></mtd></mtr></mtable><mo>]</mo></mrow></mrow></math></div>
+<p>Kirchhoff's current law for every node at once is then</p>
+<div class='eq'><math display='block'><mrow><mi mathvariant='normal'>𝐆</mi><mi mathvariant='normal'>𝐯</mi><mo>=</mo><mi mathvariant='normal'>𝐢</mi></mrow></math><span class='eqn'>(6)</span></div>
+<p>where <b>v</b> holds the node voltages and <b>i</b> holds the currents injected into each node by
+the history current sources. A history current <i>I</i><sub>hist</sub> flowing from node <i>k</i> to
+node <i>m</i> takes <i>I</i><sub>hist</sub> out of <b>i</b><sub><i>k</i></sub> and puts it into
+<b>i</b><sub><i>m</i></sub>.</p>
+
+<h3>b. Known and unknown nodes</h3>
+<p>The source fixes the voltage of node 1, so node 1 is <b>known</b>. Nodes 2 and 3 are
+<b>unknown</b>. Split <b>G</b> into the rows and columns of the unknown (U) and known (K) nodes:</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi mathvariant='normal'>𝐆</mi></mrow><mrow><mi mathvariant='normal'>UU</mi></mrow></msub><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>1.0025</mn></mtd><mtd><mn class='num'>−0.0025</mn></mtd></mtr><mtr><mtd><mn class='num'>−0.0025</mn></mtd><mtd><mn class='num'>0.4125</mn></mtd></mtr></mtable><mo>]</mo></mrow><mo>,</mo><mspace width='1em'/><mspace width='1em'/><msub><mrow><mi mathvariant='normal'>𝐆</mi></mrow><mrow><mi mathvariant='normal'>UK</mi></mrow></msub><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>−1</mn></mtd></mtr><mtr><mtd><mn class='num'>0</mn></mtd></mtr></mtable><mo>]</mo></mrow></mrow></math></div>
+<p>and solve only for the unknown voltages:</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi mathvariant='normal'>𝐆</mi></mrow><mrow><mi mathvariant='normal'>UU</mi></mrow></msub><msub><mrow><mi mathvariant='normal'>𝐯</mi></mrow><mrow><mi>U</mi></mrow></msub><mo>=</mo><msub><mrow><mi mathvariant='normal'>𝐢</mi></mrow><mrow><mi>U</mi></mrow></msub><mo>−</mo><msub><mrow><mi mathvariant='normal'>𝐆</mi></mrow><mrow><mi mathvariant='normal'>UK</mi></mrow></msub><msub><mrow><mi mathvariant='normal'>𝐯</mi></mrow><mrow><mi>K</mi></mrow></msub></mrow></math><span class='eqn'>(7)</span></div>
+<p>Here is the beautiful part: <b>G</b> does not change from one step to the next. Only the right-hand
+side does. So the computer factorises <b>G</b><sub>UU</sub> once (EMTSim uses an LU or LDL<sup>T</sup>
+factorisation) and then every step is just a quick substitution. That is why an EMT program can run
+millions of steps.</p>
+
+<h3>c. One step, with numbers</h3>
+<p class="step">Step 1, <i>t</i> = 50 μs</p>
+<p>The source voltage is <math><mrow><mn>100</mn><mi mathvariant='normal'>cos</mi><mo stretchy='false'>(</mo><mn>2</mn><mi>π</mi><mo>×</mo><mn>50</mn><mo>×</mo><mn>0.00005</mn><mo stretchy='false'>)</mo><mo>=</mo><mn class='num'>99.9877</mn><mspace width='0.2em'/><mi mathvariant='normal'>V</mi></mrow></math>. Everything was at
+rest before, so all history currents are zero and <b>i</b><sub>U</sub> = 0.</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi mathvariant='normal'>𝐢</mi></mrow><mrow><mi>U</mi></mrow></msub><mo>−</mo><msub><mrow><mi mathvariant='normal'>𝐆</mi></mrow><mrow><mi mathvariant='normal'>UK</mi></mrow></msub><msub><mrow><mi mathvariant='normal'>𝐯</mi></mrow><mrow><mi>K</mi></mrow></msub><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>0</mn></mtd></mtr><mtr><mtd><mn class='num'>0</mn></mtd></mtr></mtable><mo>]</mo></mrow><mo>−</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>−1</mn></mtd></mtr><mtr><mtd><mn class='num'>0</mn></mtd></mtr></mtable><mo>]</mo></mrow><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>99.9877</mn></mtd></mtr></mtable><mo>]</mo></mrow><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>99.9877</mn></mtd></mtr><mtr><mtd><mn class='num'>0.0000</mn></mtd></mtr></mtable><mo>]</mo></mrow></mrow></math></div>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi mathvariant='normal'>𝐯</mi></mrow><mrow><mi>U</mi></mrow></msub><mo>=</mo><msup><mrow><msub><mrow><mi mathvariant='normal'>𝐆</mi></mrow><mrow><mi mathvariant='normal'>UU</mi></mrow></msub></mrow><mrow><mo>−</mo><mn>1</mn></mrow></msup><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>99.9877</mn></mtd></mtr><mtr><mtd><mn class='num'>0.0000</mn></mtd></mtr></mtable><mo>]</mo></mrow><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>99.7398</mn></mtd></mtr><mtr><mtd><mn class='num'>0.6045</mn></mtd></mtr></mtable><mo>]</mo></mrow></mrow></math></div>
+<p>So after the first step, node 2 is at 99.74 V and node 3 is still almost at 0 V. The
+current through the inductor is <math><mrow><mn>0.0025</mn><mo>×</mo><mo stretchy='false'>(</mo><mn class='num'>99.7398</mn><mo>−</mo><mn class='num'>0.6045</mn><mo stretchy='false'>)</mo><mo>=</mo><mn class='num'>0.247838</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math>, and the capacitor current is
+<math><mrow><mn class='num'>0.4</mn><mo>×</mo><mn class='num'>0.6045</mn><mo>=</mo><mn class='num'>0.241794</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math>.</p>
+<p class="step">Step 2, <i>t</i> = 100 μs</p>
+<p>The history currents, from (4) and Figure 4:</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi><mo>,</mo><mi>L</mi></mrow></msub><mo>=</mo><mn class='num'>0.247838</mn><mo>+</mo><mn class='num'>0.0025</mn><mo>×</mo><mn class='num'>99.1353</mn><mo>=</mo><mn class='num'>0.495677</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math></div>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi>I</mi></mrow><mrow><mi mathvariant='normal'>hist</mi><mo>,</mo><mi>C</mi></mrow></msub><mo>=</mo><mo>−</mo><mn class='num'>0.241794</mn><mo>−</mo><mn class='num'>0.4</mn><mo>×</mo><mn class='num'>0.6045</mn><mo>=</mo><mn class='num'>−0.483587</mn><mspace width='0.2em'/><mi mathvariant='normal'>A</mi></mrow></math></div>
+<p><i>I</i><sub>hist,L</sub> flows from node 2 to node 3, and <i>I</i><sub>hist,C</sub> from node 3 to
+ground, so</p>
+<div class='eq'><math display='block'><mrow><msub><mrow><mi mathvariant='normal'>𝐢</mi></mrow><mrow><mi>U</mi></mrow></msub><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>−0.495677</mn></mtd></mtr><mtr><mtd><mn class='num'>0.979264</mn></mtd></mtr></mtable><mo>]</mo></mrow><mo>,</mo><mspace width='1em'/><msub><mrow><mi mathvariant='normal'>𝐯</mi></mrow><mrow><mi>K</mi></mrow></msub><mo>=</mo><mn class='num'>99.9507</mn><mspace width='0.2em'/><mi mathvariant='normal'>V</mi><mo>,</mo><mspace width='1em'/><msub><mrow><mi mathvariant='normal'>𝐯</mi></mrow><mrow><mi>U</mi></mrow></msub><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>99.2144</mn></mtd></mtr><mtr><mtd><mn class='num'>2.9753</mn></mtd></mtr></mtable><mo>]</mo></mrow></mrow></math></div>
+<p>And so on, step after step. Figure 8 shows the voltage of node 3 for the first 80 ms. When the source
+is switched on, the inductor and the capacitor exchange energy at their natural frequency
+<math><mrow><mn>1</mn><mo>/</mo><mo stretchy='false'>(</mo><mn>2</mn><mi>π</mi><msqrt><mrow><mi mathvariant='normal'>LC</mi></mrow></msqrt><mo stretchy='false'>)</mo><mo>≈</mo><mn class='num'>503</mn><mspace width='0.2em'/><mi mathvariant='normal'>Hz</mi></mrow></math>; the voltage overshoots to
+153.2 V before the load damps the ringing and the steady state, which a phasor calculation
+would give, takes over.</p>
+<figure><img src="fig/network_result.svg" style="width:100%">
+<figcaption>Figure 8: Voltage of node 3 after the source is switched on, and the steady state from a
+phasor calculation of the same circuit.</figcaption></figure>
+
+<h3>d. The time loop</h3>
+<p>Put together, an EMT program is a loop over these steps. This is exactly the order EMTSim uses:</p>
+<div class="loop">
+<div><b>Once:</b> build <b>G</b> from the companion models and factorise <b>G</b><sub>UU</sub>.</div>
+<div><b>Every step</b> (<i>t</i> = <i>t</i> + Δt):</div>
+<ol>
+<li>If a switch or fault changes state, rebuild <b>G</b> and factorise it again.</li>
+<li>Update the known voltages <b>v</b><sub>K</sub> (the sources).</li>
+<li>Calculate the history current of every inductor and capacitor, and add them up into <b>i</b>.</li>
+<li>Solve <b>G</b><sub>UU</sub> <b>v</b><sub>U</sub> = <b>i</b><sub>U</sub> − <b>G</b><sub>UK</sub> <b>v</b><sub>K</sub>.</li>
+<li>Calculate the current in every element, and save the results.</li>
+</ol>
+</div>
+
+
+<h2>5. Switches and faults</h2>
+<p>A switch is simply a resistor that changes its value: a very small resistance when it is closed
+(EMTSim uses 0.01 Ω) and a very large one when it is open (1 MΩ). A fault is a switch from a node to
+ground. When it changes state, its conductance changes, so <b>G</b> changes. That is step 1 of the
+time loop: rebuild <b>G</b>, factorise it again, and carry on. The history currents are not touched,
+so the inductors and capacitors remember their current and voltage across the switching instant, just as
+they do in real life.</p>
+<p>Let us put a fault on node 3 of our network at 30 ms and clear it at 60 ms (Figure 9).</p>
+<figure><img src="fig/network_fault.svg" style="width:80%">
+<figcaption>Figure 9: The network of Figure 7 with a fault from node 3 to ground.</figcaption></figure>
+<p>While the fault is open, it adds 1/10<sup>6</sup> S to <b>G</b><sub>33</sub>. When it closes, it
+adds 1/0.01 = 100 S:</p>
+<div class='eq'><math display='block'><mrow><mi mathvariant='normal'>before</mi><mo>:</mo><mspace width='1em'/><msub><mrow><mi mathvariant='normal'>𝐆</mi></mrow><mrow><mi mathvariant='normal'>UU</mi></mrow></msub><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>1.002500</mn></mtd><mtd><mn class='num'>−0.002500</mn></mtd></mtr><mtr><mtd><mn class='num'>−0.002500</mn></mtd><mtd><mn class='num'>0.412501</mn></mtd></mtr></mtable><mo>]</mo></mrow><mspace width='1em'/><mspace width='1em'/><mi mathvariant='normal'>during</mi><mo>:</mo><mspace width='1em'/><msub><mrow><mi mathvariant='normal'>𝐆</mi></mrow><mrow><mi mathvariant='normal'>UU</mi></mrow></msub><mo>=</mo><mrow><mo>[</mo><mtable columnspacing='1.1em'><mtr><mtd><mn class='num'>1.0025</mn></mtd><mtd><mn class='num'>−0.0025</mn></mtd></mtr><mtr><mtd><mn class='num'>−0.0025</mn></mtd><mtd><mn class='num'>100.4125</mn></mtd></mtr></mtable><mo>]</mo></mrow></mrow></math></div>
+<p>Figure 10 shows the result. When the fault is applied, node 3 collapses to almost zero and the
+capacitor discharges into the fault. The current in <i>L</i> grows to about 32.3 A,
+limited mostly by the inductor. When the fault is cleared, the capacitor and the inductor ring again at
+about 503 Hz before the network settles back to its steady state.</p>
+<figure><img src="fig/fault_result.svg" style="width:100%">
+<figcaption>Figure 10: Voltage of node 3 and current in the inductor, with the fault (shaded) from 30 to
+60 ms.</figcaption></figure>
+
+
+<h2>6. Try it yourself with EMTSim</h2>
+<p>Everything in this book was calculated with the same steps that EMTSim uses, and checked against
+it: EMTSim gives the same numbers, to the last digit. You can run every example yourself. An EMTSim
+netlist has one line per element: the type, the nodes it connects (0 is ground) and its value.
+This is the circuit of chapter 3:</p>
+<pre># Tiny book of EMT simulation, chapter 3: closing a switch on a 10 V battery, 1 ohm, 1 mH.
+# The circuit is at rest before t = 0; the battery is connected at t = 0.
+.tran 0.0001 0.005
+V 0 1  10 0 0      # BATTERY   (peak 10 V, angle 0, frequency 0 = DC)
+R 1 2  1           # R
+L 2 0  0.001       # L</pre>
+<p>and this is the network with the fault, from chapter 5:</p>
+<pre># Tiny book of EMT simulation, chapter 5: the network of chapter 4 with a fault at node 3
+# from 30 ms to 60 ms.
+.tran 0.00005 0.08
+V 0 1  100 0 50    # SOURCE
+R 1 2  1           # R1
+L 2 3  0.01        # L
+C 3 0  10e-6       # C
+R 3 0  100         # LOAD
+F 3 0  0.03 0.06   # FAULT</pre>
+<p>Run them from the EMTSim folder with either solver:</p>
+<pre>build\emtsim.exe docs\book\circuits\rl.net
+python main.py docs\book\circuits\network_fault.net
+python plot.py</pre>
+<p>The node voltages are written to <code>results.csv</code> and the element currents to
+<code>currents.csv</code>. Compare the first lines of <code>results.csv</code> with Table 1. You can
+also open the circuit editor with <code>gui.bat</code>, draw the circuit, press Run, and drag across a
+plot to zoom into the first few steps.</p>
+<p>Then try changing things. Make Δt ten times bigger and see the error grow. Move the fault to node 2.
+Change the load to 10 Ω and watch the ringing die out faster.</p>
+
+
+<h2>7. What if we open the switch?</h2>
+<p>So far, we have only closed switches. Let us take the circuit of chapter 3 again, wait until the
+current has almost reached 10 A, and open the switch at <i>t</i> = 3 ms (Figure 11).</p>
+<figure><img src="fig/rl_open_circuit.svg" style="width:62%">
+<figcaption>Figure 11: The circuit of chapter 3, with a switch that opens at 3 ms.</figcaption></figure>
+<p>In a real circuit, the current in an inductor cannot stop instantly. When the switch opens, the
+inductor drives the voltage across the opening contacts up very high (that is why breakers draw arcs),
+and the current falls to zero very quickly. Now look at what our simulation says (Figure 12).</p>
+<figure><img src="fig/rl_open_result.svg" style="width:100%">
+<figcaption>Figure 12: Left: current in the inductor. Right: voltage across the inductor at every
+step around the opening. Both calculated with the trapezoidal rule and Δt = 0.1 ms.</figcaption></figure>
+<p>The current looks fine: just before the switch opens it is 9.35 A, and from the next
+step on it is practically zero (less than 0.0002 A). But look at the voltage across the
+inductor. Just before the opening it is 0.56 V. In the steps after it, the simulation gives
+−187.5, 187.5, −187.4, 187.4, −187.4 V, and so on, flipping sign at every single step for as long as
+we care to simulate. No current flows, and yet the inductor voltage keeps jumping between plus and
+minus 187 V.</p>
+<p>Does the voltage in the real circuit do that? Or is it our simulation? Try equation (4) with the
+1 MΩ of the open switch in series with <i>R<sub>L</sub></i> = 20 Ω, and see what happens to
+<i>I</i><sub>hist</sub> from one step to the next.</p>
+</body></html>
