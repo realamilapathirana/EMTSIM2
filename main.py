@@ -19,13 +19,19 @@ def refactor(EMTDC):
 MAX_ITERATIONS = 50
 
 
-def run(netlist_path=None):
+def run(netlist_path=None, chatter=None, interp=None):
+    """chatter / interp: True or False override the netlist's .options line (None: keep it)"""
     print("\nStart running the simulation..... \n")
     Time=config.srtTime
     #Use a netlist file if given, otherwise the circuit in dataloader.py
     if netlist_path:
         import netlist
         dl.elemet_list = netlist.load(netlist_path)
+    if chatter is not None:
+        config.chatter = chatter
+    if interp is not None:
+        config.interp = interp
+    print("Chatter removal %s, switching interpolation %s\n" % ("on" if config.chatter else "off", "on" if config.interp else "off"))
     #Initialize the network
     EMTDC=emtcls.Network()
     #Set the initial switch/fault states and factorise G
@@ -183,3 +189,20 @@ def run_with_events(EMTDC):
                 be_left = 2
         a = te
     config.step, config.euler = dt, False
+
+
+if __name__ == "__main__":
+    # python main.py                       -> circuit in dataloader.py
+    # python main.py circuits/grid100.net  -> circuit from a netlist file
+    # python main.py circuits/grid100.net --chatter=off --interp=off
+    #                                      -> override the netlist's .options (chatter removal, interpolation)
+    path, opts = None, {}
+    for arg in sys.argv[1:]:
+        key, _, val = arg.partition("=")
+        if key in ("--chatter", "--interp") and val.lower() in ("on", "off"):
+            opts[key[2:]] = val.lower() == "on"
+        elif arg.startswith("-"):
+            raise SystemExit("usage: python main.py [netlist.net] [--chatter=on|off] [--interp=on|off]")
+        else:
+            path = arg
+    run(path, **opts)

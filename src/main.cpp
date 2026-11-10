@@ -22,15 +22,34 @@ constexpr int MAX_ITERATIONS = 50;
 
 // Usage:  emtsim                         -> circuit in circuit.cpp
 //         emtsim circuits/grid100.net    -> circuit from a netlist file
+//         emtsim circuits/grid100.net --chatter=off --interp=off
+//                                        -> override the netlist's .options (chatter removal, interpolation)
 int main(int argc, char** argv) {
     try {
+        std::string path;
+        int chatter = -1, interp = -1;   // -1: as the netlist says
+        for (int k = 1; k < argc; ++k) {
+            const std::string arg = argv[k];
+            const std::size_t eq = arg.find('=');
+            const std::string key = arg.substr(0, eq), val = eq == std::string::npos ? "" : arg.substr(eq + 1);
+            if ((key == "--chatter" || key == "--interp") && (val == "on" || val == "off"))
+                (key == "--chatter" ? chatter : interp) = val == "on";
+            else if (!arg.empty() && arg[0] == '-')
+                throw std::runtime_error("usage: emtsim [netlist.net] [--chatter=on|off] [--interp=on|off]");
+            else
+                path = arg;
+        }
         std::cout << "\nStart running the simulation..... \n\n";
         double Time = config::srtTime;
 
         const auto wallStart = std::chrono::steady_clock::now();
 
         // Initialize the network with the circuit from a netlist file or circuit.cpp
-        Circuit ckt = argc > 1 ? loadNetlist(argv[1]) : buildCircuit();
+        Circuit ckt = !path.empty() ? loadNetlist(path) : buildCircuit();
+        if (chatter >= 0) config::chatter = chatter;
+        if (interp >= 0) config::interp = interp;
+        std::cout << "Chatter removal " << (config::chatter ? "on" : "off") << ", switching interpolation "
+                  << (config::interp ? "on" : "off") << "\n\n";
         Network EMTDC(std::move(ckt.elements), ckt.userNodes);
         // Set the initial switch/fault states and factorise G
         EMTDC.updateSwitches(Time);
