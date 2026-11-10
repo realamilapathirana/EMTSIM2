@@ -1,4 +1,4 @@
-# Tiny book of EMT simulation, chapter 5: the network of chapter 4 with a fault at node 3
+# Tiny book of EMT simulation, chapter 6: the network of chapter 5 with a fault at node 3
 # from 30 ms to 60 ms.
 .tran 0.00005 0.08
 V 0 1  100 0 50    # SOURCE

@@ -1,4 +1,4 @@
-# Tiny book of EMT simulation, chapter 7: the circuit of chapter 3 with a switch that opens at 3 ms.
+# Tiny book of EMT simulation, chapter 8: the circuit of chapter 4 with a switch that opens at 3 ms.
 .tran 0.0001 0.005
 V 0 1  10 0 0      # BATTERY
 SW 1 2  closed 0.003  # SWITCH
